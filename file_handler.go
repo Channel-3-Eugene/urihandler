@@ -1,5 +1,5 @@
-// Package uriHandler provides a set of tools for file handling operations that can interact with regular files and FIFOs.
-package uriHandler
+// Package urihandler provides a set of tools for file handling operations that can interact with regular files and FIFOs.
+package urihandler
 
 import (
 	"io"

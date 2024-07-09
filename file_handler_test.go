@@ -1,4 +1,4 @@
-package uriHandler
+package urihandler
 
 import (
 	"crypto/rand"

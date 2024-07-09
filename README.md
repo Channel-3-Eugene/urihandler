@@ -1,15 +1,15 @@
 # URI Handler Package
 
-The uriHandler package provides a unified interface for handling different types of URI-based data streams including TCP, UDP, and file operations. This package enables applications to interact seamlessly with various data sources and destinations, supporting a wide range of use cases from network communication to file management and web streaming.
+The urihandler package provides a unified interface for handling different types of URI-based data streams including TCP, UDP, and file operations. This package enables applications to interact seamlessly with various data sources and destinations, supporting a wide range of use cases from network communication to file management and web streaming.
 
 ## Installation
 
-To install the library, use `go get github.com/Channel-3-Eugene/tribd/urihandler`.
+To install the library, use `go get github.com/Channel-3-Eugene/urihandler`.
 
-To use the uriHandler package, import it into your Go project:
+To use the urihandler package, import it into your Go project:
 
 ```go
-import "github.com/Channel-3-Eugene/tribd/urihandler"
+import "github.com/Channel-3-Eugene/urihandler"
 ```
 
 ## Features
@@ -30,7 +30,7 @@ import "github.com/Channel-3-Eugene/tribd/urihandler"
 
 ### File Handler
 
-The FileHandler within the uriHandler package is designed to handle various file operations in a unified and efficient manner. It supports reading from and writing to different types of file-like endpoints, which makes it highly versatile for applications that require handling standard files, named pipes (FIFOs), and potentially other special file types.
+The FileHandler within the urihandler package is designed to handle various file operations in a unified and efficient manner. It supports reading from and writing to different types of file-like endpoints, which makes it highly versatile for applications that require handling standard files, named pipes (FIFOs), and potentially other special file types.
 
 - Standard File Operations: The handler can open, read from, and write to plain files stored on disk. This is useful for applications that need to process or generate data stored in a file system.
 - Standard Streams: The handler will open, read from, and write to standard streams such as stdin, stdout, and numbered file descriptors beyond stderr.
@@ -45,7 +45,7 @@ The FileHandler can be instantiated with parameters that define its role, the pa
 package main
 
 import (
-    "github.com/Channel-3-Eugene/tribd/urihandler"
+    "github.com/Channel-3-Eugene/urihandler"
     "time"
 )
 
@@ -53,7 +53,7 @@ func main() {
     dataChan := make(chan []byte)
 
     // Create a FileHandler to read from a named pipe
-    fileHandler := uriHandler.NewFileHandler("/tmp/myfifo", uriHandler.Reader, true, dataChan, 0, 0)
+    fileHandler := urihandler.NewFileHandler("/tmp/myfifo", urihandler.Reader, true, dataChan, 0, 0)
 
     if err := fileHandler.Open(); err != nil {
         panic(err)
@@ -97,7 +97,7 @@ The TCP Handler can be used to set up a client or server for TCP-based communica
 package main
 
 import (
-    "github.com/Channel-3-Eugene/tribd/urihandler"
+    "github.com/Channel-3-Eugene/urihandler"
     "log"
 )
 
@@ -105,7 +105,7 @@ func main() {
     dataChan := make(chan []byte, 1024) // Buffer size as needed
 
     // Setup a TCP server handler
-    tcpHandler := uriHandler.NewTCPHandler("localhost:9999", uriHandler.Server, dataChan)
+    tcpHandler := urihandler.NewTCPHandler("localhost:9999", urihandler.Server, dataChan)
     if err := tcpHandler.Open(); err != nil {
         log.Fatal(err)
     }
@@ -139,7 +139,7 @@ The UDP Handler is used for sending and receiving datagrams over UDP, supporting
 package main
 
 import (
-    "github.com/Channel-3-Eugene/tribd/urihandler"
+    "github.com/Channel-3-Eugene/urihandler"
     "log"
 )
 
@@ -147,7 +147,7 @@ func main() {
     dataChan := make(chan []byte, 1024) // Buffer size as needed
 
     // Setup a UDP endpoint
-    udpHandler := uriHandler.NewUDPHandler("localhost:9998", uriHandler.Reader, dataChan)
+    udpHandler := urihandler.NewUDPHandler("localhost:9998", urihandler.Reader, dataChan)
     if err := udpHandler.Open(); err != nil {
         log.Fatal(err)
     }

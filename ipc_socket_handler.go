@@ -1,5 +1,5 @@
-// Package uriHandler provides utilities for handling different types of socket communications.
-package uriHandler
+// Package urihandler provides utilities for handling different types of socket communications.
+package urihandler
 
 import (
 	"fmt"
