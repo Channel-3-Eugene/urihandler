@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Channel-3-Eugene/tribd/channels"
+	"github.com/Channel-3-Eugene/channels"
 	"github.com/stretchr/testify/assert"
 )
 

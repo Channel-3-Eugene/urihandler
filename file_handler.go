@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Channel-3-Eugene/tribd/channels" // Correct import path
+	"github.com/Channel-3-Eugene/channels" // Correct import path
 )
 
 // FileStatus represents the current status of a FileHandler, including operational configuration and state.

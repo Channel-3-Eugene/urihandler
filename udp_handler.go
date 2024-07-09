@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Channel-3-Eugene/tribd/channels" // Correct import path
+	"github.com/Channel-3-Eugene/channels" // Correct import path
 )
 
 // UDPStatus represents the status of a UDPHandler, detailing its configuration and state.

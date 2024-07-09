@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Channel-3-Eugene/tribd/channels" // Correct import path
+	"github.com/Channel-3-Eugene/channels" // Correct import path
 )
 
 // SocketStatus defines the status of a SocketHandler including its mode, role, and current connections.
