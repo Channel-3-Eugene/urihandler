@@ -20,6 +20,7 @@ func TestParseURI(t *testing.T) {
 				Host:   "localhost",
 				Port:   9999,
 				Path:   "",
+				Exists: true,
 			},
 			err: "",
 		},
@@ -30,16 +31,18 @@ func TestParseURI(t *testing.T) {
 				Host:   "localhost",
 				Port:   8888,
 				Path:   "",
+				Exists: true,
 			},
 			err: "",
 		},
 		{
-			input: "file:///tmp/testfile",
+			input: "file:///tmp/validfilepath",
 			expected: &URI{
 				Scheme: "file",
 				Host:   "",
 				Port:   0,
-				Path:   "/tmp/testfile",
+				Path:   "/tmp/validfilepath",
+				Exists: true,
 			},
 			err: "",
 		},
@@ -50,6 +53,7 @@ func TestParseURI(t *testing.T) {
 				Host:   "",
 				Port:   0,
 				Path:   "/tmp/mypipe",
+				Exists: true,
 			},
 			err: "",
 		},
@@ -60,6 +64,7 @@ func TestParseURI(t *testing.T) {
 				Host:   "",
 				Port:   0,
 				Path:   "/tmp/mysocket",
+				Exists: true,
 			},
 			err: "",
 		},
@@ -85,17 +90,24 @@ func TestParseURI(t *testing.T) {
 				Host:   "",
 				Port:   0,
 				Path:   "/tmp/validfilepath",
+				Exists: true,
 			},
 			err: "",
 		},
 		{
-			input:    "nonexistentfile",
-			expected: nil,
-			err:      "invalid URI or file path: nonexistentfile",
+			input: "/tmp/nonexistentfile",
+			expected: &URI{
+				Scheme: "file",
+				Host:   "",
+				Port:   0,
+				Path:   "/tmp/nonexistentfile",
+				Exists: false,
+			},
+			err: "",
 		},
 	}
 
-	// Create a dummy file for testing
+	// Create dummy files for testing
 	_, err := os.Create("/tmp/validfilepath")
 	if err != nil {
 		t.Fatalf("Failed to create dummy file: %v", err)
