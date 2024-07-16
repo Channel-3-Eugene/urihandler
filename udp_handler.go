@@ -103,11 +103,14 @@ func (h *UDPHandler) Status() UDPStatus {
 }
 
 // Open starts the UDPHandler, setting up a UDP connection for sending or receiving data.
-func (h *UDPHandler) Open() error {
+func (h *UDPHandler) Open(ch *channels.PacketChan) error {
 	udpAddr, err := net.ResolveUDPAddr("udp", h.address)
 	if err != nil {
 		return err
 	}
+
+	// Set the data channel for the handler.
+	h.dataChan = ch
 
 	conn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {

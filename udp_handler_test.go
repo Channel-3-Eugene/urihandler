@@ -47,11 +47,11 @@ func TestUDPHandlerDataFlow(t *testing.T) {
 
 	// Setup writer and reader handlers, each on separate local UDP addresses.
 	writer := NewUDPHandler("[::1]:0", 0, 0, Writer, nil, nil)
-	err := writer.Open()
+	err := writer.Open(channels.NewPacketChan(64 * 1024))
 	assert.Nil(t, err)
 
 	reader := NewUDPHandler("[::1]:0", 0, 0, Reader, nil, nil)
-	err = reader.Open()
+	err = reader.Open(channels.NewPacketChan(64 * 1024))
 	assert.Nil(t, err)
 	reader.dataChan = readChan
 

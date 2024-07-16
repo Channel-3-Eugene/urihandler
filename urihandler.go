@@ -32,13 +32,6 @@ type Status interface {
 	GetAddress() string
 }
 
-// Possible IO handlers we may eventually support:
-// - SRT
-// - RTMP
-// - DVB
-// - ASI
-// - SCTE-35
-
 type URI struct {
 	Scheme string
 	Host   string
@@ -48,63 +41,93 @@ type URI struct {
 }
 
 func ParseURI(uri string) (*URI, error) {
-	exists := true
-
 	parsedURL, err := url.Parse(uri)
 	if err != nil {
 		return nil, err
 	}
 
-	// If no scheme is provided, check if the input is a valid file path
-	if parsedURL.Scheme == "" || parsedURL.Scheme == "file" {
-		absolutePath, err := filepath.Abs(parsedURL.Path)
-		if err != nil {
-			exists = false
-		}
-
-		println(absolutePath)
-		_, err = os.Stat(absolutePath)
-		if err != nil {
-			exists = false
-		}
-
-		return &URI{
-			Scheme: "file",
-			Host:   "",
-			Port:   0,
-			Path:   absolutePath,
-			Exists: exists,
-		}, nil
+	if isFileLikeScheme(parsedURL.Scheme) {
+		return parseFileLikeURI(parsedURL)
 	}
 
+	if !isSupportedScheme(parsedURL.Scheme) {
+		return nil, fmt.Errorf("unknown or unsupported scheme: %s", parsedURL.Scheme)
+	}
+
+	return parseNetworkURI(parsedURL)
+}
+
+func isFileLikeScheme(scheme string) bool {
+	return scheme == "" || scheme == "file" || scheme == "pipe" || scheme == "unix"
+}
+
+func parseFileLikeURI(parsedURL *url.URL) (*URI, error) {
+	scheme := parsedURL.Scheme
+	if scheme == "" {
+		scheme = "file"
+	}
+
+	absolutePath, err := filepath.Abs(parsedURL.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	fileInfo, err := os.Stat(absolutePath)
+	exists := err == nil || !os.IsNotExist(err)
+
+	if exists {
+		exists = validateFileType(scheme, fileInfo.Mode())
+	}
+
+	return &URI{
+		Scheme: scheme,
+		Host:   "",
+		Port:   0,
+		Path:   absolutePath,
+		Exists: exists,
+	}, nil
+}
+
+func validateFileType(scheme string, mode os.FileMode) bool {
+	switch scheme {
+	case "file":
+		return mode.IsRegular()
+	case "pipe":
+		return mode&os.ModeNamedPipe != 0
+	case "unix":
+		return mode&os.ModeSocket != 0
+	default:
+		return false
+	}
+}
+
+func parseNetworkURI(parsedURL *url.URL) (*URI, error) {
 	host := parsedURL.Hostname()
 	portStr := parsedURL.Port()
-	path := parsedURL.Path
 
-	var port int
-	if portStr != "" {
-		port, err = strconv.Atoi(portStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid port: %v", err)
-		}
-	} else {
-		switch parsedURL.Scheme {
-		case "tcp", "udp":
-			return nil, fmt.Errorf("port must be specified for %s scheme", parsedURL.Scheme)
-		case "unix", "pipe":
-			port = 0 // No port needed for these schemes
-		case "http", "https":
-			return nil, fmt.Errorf("%s not supported", parsedURL.Scheme)
-		default:
-			return nil, fmt.Errorf("unknown scheme: %s", parsedURL.Scheme)
-		}
+	if portStr == "" {
+		return nil, fmt.Errorf("port must be specified for %s scheme", parsedURL.Scheme)
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port: %v", err)
 	}
 
 	return &URI{
 		Scheme: parsedURL.Scheme,
 		Host:   host,
 		Port:   port,
-		Path:   path,
-		Exists: exists,
+		Path:   parsedURL.Path,
+		Exists: true, // Network URIs are assumed to exist for the purpose of URI parsing
 	}, nil
+}
+
+func isSupportedScheme(scheme string) bool {
+	switch scheme {
+	case "tcp", "udp":
+		return true
+	default:
+		return false
+	}
 }
