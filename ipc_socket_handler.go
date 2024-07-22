@@ -1,4 +1,3 @@
-// Package urihandler provides utilities for handling different types of socket communications.
 package urihandler
 
 import (
@@ -7,8 +6,6 @@ import (
 	"net"
 	"sync"
 	"time"
-
-	"github.com/Channel-3-Eugene/channels" // Correct import path
 )
 
 // SocketStatus defines the status of a SocketHandler including its mode, role, and current connections.
@@ -38,21 +35,23 @@ type SocketHandler struct {
 	mode          Mode
 	role          Role
 	listener      net.Listener
-	dataChan      *channels.PacketChan
+	dataChannel   chan []byte
+	events        chan error
 	connections   map[net.Conn]struct{}
 	mu            sync.RWMutex // Use RWMutex to allow concurrent reads
 	status        SocketStatus
 }
 
 // NewSocketHandler creates and initializes a new SocketHandler with the specified parameters.
-func NewSocketHandler(socketPath string, readDeadline, writeDeadline time.Duration, mode Mode, role Role) *SocketHandler {
+func NewSocketHandler(mode Mode, role Role, dataChannel chan []byte, events chan error, socketPath string, readDeadline, writeDeadline time.Duration) *SocketHandler {
 	return &SocketHandler{
+		mode:          mode,
+		role:          role,
+		dataChannel:   dataChannel,
+		events:        events,
 		socketPath:    socketPath,
 		readDeadline:  readDeadline,
 		writeDeadline: writeDeadline,
-		mode:          mode,
-		role:          role,
-		dataChan:      channels.NewPacketChan(64 * 1024), // Initialize PacketChan with a buffer size
 		connections:   make(map[net.Conn]struct{}),
 		status: SocketStatus{
 			Address:       socketPath,
@@ -69,10 +68,21 @@ func NewSocketHandler(socketPath string, readDeadline, writeDeadline time.Durati
 func (h *SocketHandler) Open() error {
 	if h.mode == Client {
 		go h.connectClient()
+		return nil
 	} else if h.mode == Server {
+		ln, err := net.Listen("unix", h.socketPath)
+		if err != nil {
+			h.SendError(fmt.Errorf("error creating socket: %w", err))
+			return err
+		}
+		h.mu.Lock()
+		h.listener = ln
+		h.status.Address = ln.Addr().String()
+		h.mu.Unlock()
 		go h.startServer()
+		return nil
 	}
-	return nil
+	return fmt.Errorf("invalid mode: %v", h.mode)
 }
 
 // Status returns the current status of the socket.
@@ -98,7 +108,7 @@ func (h *SocketHandler) Status() SocketStatus {
 func (h *SocketHandler) connectClient() {
 	conn, err := net.Dial("unix", h.socketPath)
 	if err != nil {
-		fmt.Printf("Error connecting to socket: %#v %s", err, err.Error())
+		h.SendError(fmt.Errorf("error connecting to socket: %w", err))
 		return
 	}
 	h.mu.Lock()
@@ -110,19 +120,10 @@ func (h *SocketHandler) connectClient() {
 
 // startServer starts the socket server and listens for incoming connections.
 func (h *SocketHandler) startServer() {
-	ln, err := net.Listen("unix", h.socketPath)
-	if err != nil {
-		fmt.Printf("Error creating socket: %#v %s", err, err.Error())
-		return
-	}
-	h.mu.Lock()
-	h.listener = ln
-	h.status.Address = ln.Addr().String()
-	h.mu.Unlock()
-
 	for {
 		conn, err := h.listener.Accept()
 		if err != nil {
+			h.SendError(err)
 			continue
 		}
 		h.mu.Lock()
@@ -154,13 +155,13 @@ func (h *SocketHandler) handleWrite(conn net.Conn) {
 		conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
 	}
 	for {
-		data := h.dataChan.Receive()
-		if data == nil {
+		message, ok := <-h.dataChannel
+		if !ok {
 			break // Channel closed
 		}
-		_, err := conn.Write(data)
+		_, err := conn.Write(message)
 		if err != nil {
-			fmt.Println("Error writing to connection:", err)
+			h.SendError(err)
 			break // Exit if there is an error writing
 		}
 	}
@@ -176,15 +177,11 @@ func (h *SocketHandler) handleRead(conn net.Conn) {
 		n, err := conn.Read(readBuffer)
 		if err != nil {
 			if err != io.EOF {
-				fmt.Println("Error reading from connection:", err)
+				h.SendError(err)
 			}
 			break // Exit on error or when EOF is reached
 		}
-		// Send the data to the data channel for further processing
-		err = h.dataChan.Send(readBuffer[:n])
-		if err != nil {
-			break
-		}
+		h.dataChannel <- readBuffer[:n]
 	}
 }
 
@@ -199,6 +196,12 @@ func (h *SocketHandler) Close() error {
 		conn.Close()
 	}
 	h.connections = nil
-	h.dataChan.Close()
+	close(h.dataChannel)
 	return nil
+}
+
+func (h *SocketHandler) SendError(err error) {
+	if h.events != nil {
+		h.events <- err
+	}
 }

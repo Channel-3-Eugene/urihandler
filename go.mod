@@ -3,7 +3,6 @@ module github.com/Channel-3-Eugene/urihandler
 go 1.22.2
 
 require (
-	github.com/Channel-3-Eugene/channels v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.9.0
 )
 
@@ -13,4 +12,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/Channel-3-Eugene/channels => ../channels

@@ -5,8 +5,6 @@ import (
 	"net"
 	"sync"
 	"time"
-
-	"github.com/Channel-3-Eugene/channels" // Correct import path
 )
 
 // TCPStatus represents the status of a TCPHandler instance.
@@ -40,7 +38,8 @@ type TCPHandler struct {
 	mode          Mode                  // mode represents the operational mode of the TCPHandler.
 	role          Role                  // role represents the role of the TCPHandler, whether it's a server or client.
 	listener      net.Listener          // listener represents the TCP listener for server mode.
-	dataChan      *channels.PacketChan  // dataChan is a PacketChan for sending and receiving data.
+	dataChannel   chan []byte           // dataChannel is a channel for sending and receiving data.
+	events        chan error            // events is a channel for sending error events.
 	connections   map[net.Conn]struct{} // connections holds a map of active TCP connections.
 	mu            sync.RWMutex          // Use RWMutex to allow concurrent reads.
 
@@ -48,14 +47,15 @@ type TCPHandler struct {
 }
 
 // NewTCPHandler creates a new instance of TCPHandler with the specified configuration.
-func NewTCPHandler(address string, readDeadline, writeDeadline time.Duration, mode Mode, role Role) *TCPHandler {
+func NewTCPHandler(mode Mode, role Role, dataChannel chan []byte, events chan error, address string, readDeadline, writeDeadline time.Duration) *TCPHandler {
 	h := &TCPHandler{
+		mode:          mode,
+		role:          role,
+		dataChannel:   dataChannel,
+		events:        events,
 		address:       address,
 		readDeadline:  readDeadline,
 		writeDeadline: writeDeadline,
-		mode:          mode,
-		role:          role,
-		dataChan:      channels.NewPacketChan(64 * 1024), // Initialize PacketChan with a buffer size
 		connections:   make(map[net.Conn]struct{}),
 	}
 
@@ -127,6 +127,7 @@ func (h *TCPHandler) acceptClients() {
 	for {
 		conn, err := h.listener.Accept()
 		if err != nil {
+			h.SendError(err)
 			continue
 		}
 		h.mu.Lock()
@@ -147,27 +148,43 @@ func (h *TCPHandler) manageStream(conn net.Conn) {
 
 	// Handle data transmission based on the role of the TCPHandler.
 	if h.role == Writer {
-		for {
-			data := h.dataChan.Receive()
-			if data == nil {
-				break // Channel closed
-			}
-			if _, err := conn.Write(data); err != nil {
-				break
-			}
-		}
+		h.handleWrite(conn)
 	} else if h.role == Reader {
-		readBuffer := make([]byte, 188*10)
-		for {
-			n, err := conn.Read(readBuffer)
-			if err != nil {
-				break
-			}
-			err = h.dataChan.Send(readBuffer[:n])
-			if err != nil {
-				break
-			}
+		h.handleRead(conn)
+	}
+}
+
+// handleWrite manages writing data to the TCP connection.
+func (h *TCPHandler) handleWrite(conn net.Conn) {
+	if h.writeDeadline > 0 {
+		conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
+	}
+	for {
+		message, ok := <-h.dataChannel
+		if !ok {
+			break // Channel closed
 		}
+		_, err := conn.Write(message)
+		if err != nil {
+			h.SendError(err)
+			break
+		}
+	}
+}
+
+// handleRead manages reading data from the TCP connection.
+func (h *TCPHandler) handleRead(conn net.Conn) {
+	if h.readDeadline > 0 {
+		conn.SetReadDeadline(time.Now().Add(h.readDeadline))
+	}
+	readBuffer := make([]byte, 4096)
+	for {
+		n, err := conn.Read(readBuffer)
+		if err != nil {
+			h.SendError(err)
+			break
+		}
+		h.dataChannel <- readBuffer[:n]
 	}
 }
 
@@ -182,6 +199,12 @@ func (h *TCPHandler) Close() error {
 		conn.Close()
 	}
 	h.connections = nil
-	h.dataChan.Close()
+	close(h.dataChannel)
 	return nil
+}
+
+func (h *TCPHandler) SendError(err error) {
+	if h.events != nil {
+		h.events <- err
+	}
 }

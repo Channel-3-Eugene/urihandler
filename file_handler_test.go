@@ -11,45 +11,47 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestNewFileHandler verifies that a new FileHandler is correctly initialized with specified parameters.
-func TestNewFileHandler(t *testing.T) {
+// TestFileHandler_New verifies that a new FileHandler is correctly initialized with specified parameters.
+func TestFileHandler_New(t *testing.T) {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		fmt.Printf("TestNewFileHandler took %v\n", duration)
+		fmt.Printf("TestFileHandler_New took %v\n", duration)
 	}()
 
 	filePath := randFileName()
 	readTimeout := 5 * time.Millisecond
 	writeTimeout := 5 * time.Millisecond
+	channel := make(chan []byte)
+	events := make(chan error)
 
-	handler := NewFileHandler(filePath, Writer, false, readTimeout, writeTimeout)
-	dataChan := handler.dataChan
+	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, readTimeout, writeTimeout)
 
 	// Assert that all properties are set as expected.
 	assert.Equal(t, filePath, handler.filePath)
 	assert.Equal(t, Writer, handler.role)
 	assert.Equal(t, false, handler.isFIFO)
-	assert.NotNil(t, dataChan)
 	assert.Equal(t, readTimeout, handler.readTimeout)
 	assert.Equal(t, writeTimeout, handler.writeTimeout)
 }
 
-// TestFileHandlerOpenAndClose tests the Open and Close methods of the FileHandler to ensure files are correctly managed.
-func TestFileHandlerOpenAndClose(t *testing.T) {
+// TestFileHandler_OpenAndClose tests the Open and Close methods of the FileHandler to ensure files are correctly managed.
+func TestFileHandler_OpenAndClose(t *testing.T) {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		fmt.Printf("TestFileHandlerOpenAndClose took %v\n", duration)
+		fmt.Printf("TestFileHandler_OpenAndClose took %v\n", duration)
 	}()
 
 	filePath := randFileName()
 
 	// Ensure any existing file with the same name is removed before starting the test.
 	os.Remove(filePath)
+	channel := make(chan []byte)
+	events := make(chan error)
 
 	// Open the handler and verify that the file exists after opening.
-	handler := NewFileHandler(filePath, Writer, false, 0, 0)
+	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, 0, 0)
 	err := handler.Open()
 	assert.Nil(t, err)
 	assert.FileExists(t, filePath)
@@ -67,16 +69,19 @@ func TestFileHandlerOpenAndClose(t *testing.T) {
 	os.Remove(filePath)
 }
 
-// TestFileHandlerFIFO checks the functionality of the FileHandler with FIFO specific operations.
-func TestFileHandlerFIFO(t *testing.T) {
+// TestFileHandler_FIFO checks the functionality of the FileHandler with FIFO specific operations.
+func TestFileHandler_FIFO(t *testing.T) {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		fmt.Printf("TestFileHandlerFIFO took %v\n", duration)
+		fmt.Printf("TestFileHandler_FIFO took %v\n", duration)
 	}()
 
 	filePath := randFileName()
-	handler := NewFileHandler(filePath, Reader, true, 1, 1)
+	channel := make(chan []byte)
+	events := make(chan error)
+
+	handler := NewFileHandler(Peer, Reader, channel, events, filePath, true, 1, 1)
 
 	// Open the handler as a FIFO and ensure the FIFO file exists.
 	err := handler.Open()
@@ -90,43 +95,43 @@ func TestFileHandlerFIFO(t *testing.T) {
 	writer.Close()
 }
 
-// TestFileHandlerDataFlow tests the complete cycle of writing to and reading from the file.
-func TestFileHandlerDataFlow(t *testing.T) {
+// TestFileHandler_DataFlow tests the complete cycle of writing to and reading from the file.
+func TestFileHandler_DataFlow(t *testing.T) {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		fmt.Printf("TestFileHandlerDataFlow took %v\n", duration)
+		fmt.Printf("TestFileHandler_DataFlow took %v\n", duration)
 	}()
 
 	filePath := randFileName()
+	readChannel := make(chan []byte)
+	writeChannel := make(chan []byte)
+	events := make(chan error)
 
 	// Initialize writer and reader handlers.
-	writer := NewFileHandler(filePath, Writer, false, 0, 0)
+	writer := NewFileHandler(Peer, Writer, writeChannel, events, filePath, false, 0, 0)
 	writer.Open()
+	defer writer.Close()
 
-	reader := NewFileHandler(filePath, Reader, false, 0, 0)
+	reader := NewFileHandler(Peer, Reader, readChannel, events, filePath, false, 0, 0)
 	reader.Open()
+	defer reader.Close()
 
 	// Write data to the file.
 	testData := []byte("hello, world")
 	go func() {
-		err := writer.dataChan.Send(testData)
-		assert.Nil(t, err)
-		writer.dataChan.Close()
+		writeChannel <- testData
 	}()
 
 	// Attempt to read the data and check if matches what was written.
 	select {
 	case <-time.After(5 * time.Millisecond):
 		assert.Fail(t, "Timeout waiting for data")
-	default:
-		receivedData := reader.dataChan.Receive()
-		assert.Equal(t, testData, receivedData)
+	case data := <-readChannel:
+		assert.Equal(t, testData, data)
 	}
 
 	// Clean up resources and remove test file.
-	writer.Close()
-	reader.Close()
 	os.Remove(filePath)
 }
 

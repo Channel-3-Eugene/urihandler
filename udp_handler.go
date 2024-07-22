@@ -1,11 +1,10 @@
+// Package urihandler provides utilities for handling different types of socket communications.
 package urihandler
 
 import (
 	"net"
 	"sync"
 	"time"
-
-	"github.com/Channel-3-Eugene/channels" // Correct import path
 )
 
 // UDPStatus represents the status of a UDPHandler, detailing its configuration and state.
@@ -32,25 +31,35 @@ type UDPHandler struct {
 	writeDeadline  time.Duration
 	mode           Mode
 	role           Role
-	dataChan       *channels.PacketChan
+	dataChannel    chan []byte
+	events         chan error
 	allowedSources map[string]struct{}     // Set of source IPs allowed to send data to this handler
 	destinations   map[string]*net.UDPAddr // UDP addresses for sending data
 	mu             sync.RWMutex            // Mutex to protect concurrent access to handler state
-
-	status UDPStatus
+	status         UDPStatus
 }
 
 // NewUDPHandler initializes a new UDPHandler with specified settings.
-func NewUDPHandler(address string, readDeadline, writeDeadline time.Duration, role Role, sources, destinations []string) *UDPHandler {
+func NewUDPHandler(mode Mode, role Role, dataChannel chan []byte, events chan error, address string, readDeadline, writeDeadline time.Duration, sources, destinations []string) *UDPHandler {
 	handler := &UDPHandler{
+		mode:           mode,
+		role:           role,
+		dataChannel:    dataChannel,
+		events:         events,
 		address:        address,
 		readDeadline:   readDeadline,
 		writeDeadline:  writeDeadline,
-		mode:           Peer,
-		role:           role,
-		dataChan:       channels.NewPacketChan(64 * 1024), // TODO: get this from config
 		allowedSources: make(map[string]struct{}),
 		destinations:   make(map[string]*net.UDPAddr),
+		status: UDPStatus{
+			Mode:           mode,
+			Role:           role,
+			Address:        address,
+			ReadDeadline:   readDeadline,
+			WriteDeadline:  writeDeadline,
+			AllowedSources: sources,
+			Destinations:   destinations,
+		},
 	}
 
 	// Populate allowed sources.
@@ -67,18 +76,13 @@ func NewUDPHandler(address string, readDeadline, writeDeadline time.Duration, ro
 		}
 	}
 
-	handler.status = UDPStatus{
-		Mode: Peer,
-		Role: role,
-	}
-
 	return handler
 }
 
 // Status returns the current status of the UDPHandler.
 func (h *UDPHandler) Status() UDPStatus {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
 	// Convert internal maps to slices for easier external consumption.
 	sources := make([]string, 0, len(h.allowedSources))
@@ -91,26 +95,19 @@ func (h *UDPHandler) Status() UDPStatus {
 		destinations = append(destinations, dst)
 	}
 
-	return UDPStatus{
-		Mode:           h.mode,
-		Role:           h.role,
-		Address:        h.conn.LocalAddr().String(),
-		ReadDeadline:   h.readDeadline,
-		WriteDeadline:  h.writeDeadline,
-		AllowedSources: sources,
-		Destinations:   destinations,
-	}
+	h.status.AllowedSources = sources
+	h.status.Destinations = destinations
+	h.status.Address = h.conn.LocalAddr().String()
+
+	return h.status
 }
 
 // Open starts the UDPHandler, setting up a UDP connection for sending or receiving data.
-func (h *UDPHandler) Open(ch *channels.PacketChan) error {
+func (h *UDPHandler) Open() error {
 	udpAddr, err := net.ResolveUDPAddr("udp", h.address)
 	if err != nil {
 		return err
 	}
-
-	// Set the data channel for the handler.
-	h.dataChan = ch
 
 	conn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
@@ -118,7 +115,9 @@ func (h *UDPHandler) Open(ch *channels.PacketChan) error {
 	}
 	h.conn = conn
 
+	h.mu.Lock()
 	h.status.Address = conn.LocalAddr().String()
+	h.mu.Unlock()
 
 	if h.role == Writer {
 		go h.sendData()
@@ -128,7 +127,7 @@ func (h *UDPHandler) Open(ch *channels.PacketChan) error {
 	return nil
 }
 
-// Methods for managing allowed sources and destinations.
+// AddSource adds a source address to the allowed sources list.
 func (h *UDPHandler) AddSource(addr string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -136,6 +135,7 @@ func (h *UDPHandler) AddSource(addr string) error {
 	return nil
 }
 
+// RemoveSource removes a source address from the allowed sources list.
 func (h *UDPHandler) RemoveSource(addr string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -143,6 +143,7 @@ func (h *UDPHandler) RemoveSource(addr string) error {
 	return nil
 }
 
+// AddDestination adds a destination address to the destinations list.
 func (h *UDPHandler) AddDestination(addr string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -154,6 +155,7 @@ func (h *UDPHandler) AddDestination(addr string) error {
 	return nil
 }
 
+// RemoveDestination removes a destination address from the destinations list.
 func (h *UDPHandler) RemoveDestination(addr string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -170,21 +172,22 @@ func (h *UDPHandler) sendData() {
 	}
 
 	for {
-		data := h.dataChan.Receive()
-		if data == nil {
+		message, ok := <-h.dataChannel
+		if !ok {
 			break // Channel closed
 		}
 
 		for _, addr := range h.destinations {
-			_, err := h.conn.WriteToUDP(data, addr)
+			_, err := h.conn.WriteToUDP(message, addr)
 			if err != nil {
+				h.SendError(err)
 				break
 			}
 		}
 	}
 }
 
-// receiveData continues to handle data reception and uses PacketChan.
+// receiveData handles receiving data from allowed sources.
 func (h *UDPHandler) receiveData() {
 	defer h.conn.Close()
 
@@ -194,24 +197,22 @@ func (h *UDPHandler) receiveData() {
 
 	bufferPool := sync.Pool{
 		New: func() interface{} {
-			return new([]byte)
+			buffer := make([]byte, 2048)
+			return &buffer
 		},
 	}
 
 	for {
-		rawBuffer := bufferPool.Get().(*[]byte) // Get a buffer from the pool
-		if cap(*rawBuffer) < 2048 {
-			*rawBuffer = make([]byte, 2048)
-		}
-
+		rawBuffer := bufferPool.Get().(*[]byte)
 		n, addr, err := h.conn.ReadFromUDP(*rawBuffer)
 		if err != nil {
 			bufferPool.Put(rawBuffer)
+			h.SendError(err)
 			continue
 		}
 
 		h.mu.RLock()
-		_, ok := h.allowedSources[addr.IP.String()]
+		_, ok := h.allowedSources[addr.String()]
 		h.mu.RUnlock()
 
 		if !ok {
@@ -219,11 +220,8 @@ func (h *UDPHandler) receiveData() {
 			continue
 		}
 
-		// Send the data through the channel.
-		err = h.dataChan.Send((*rawBuffer)[:n])
-		if err != nil {
-			bufferPool.Put(rawBuffer)
-		}
+		h.dataChannel <- (*rawBuffer)[:n]
+		bufferPool.Put(rawBuffer)
 	}
 }
 
@@ -234,6 +232,12 @@ func (h *UDPHandler) Close() error {
 	if h.conn != nil {
 		h.conn.Close()
 	}
-	h.dataChan.Close()
+	close(h.dataChannel)
 	return nil
+}
+
+func (h *UDPHandler) SendError(err error) {
+	if h.events != nil {
+		h.events <- err
+	}
 }
