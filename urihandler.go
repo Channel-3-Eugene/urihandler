@@ -1,15 +1,22 @@
 package urihandler
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 )
 
 type Mode string
 type Role string
+type Scheme string
+
+func (s Scheme) String() string {
+	return string(s)
+}
 
 const (
 	Peer   Mode = "peer" // Unified mode for simplicity, denoting peer-to-peer behavior
@@ -18,6 +25,17 @@ const (
 	Reader Role = "reader"
 	Writer Role = "writer"
 )
+
+const (
+	Default        = "" // Default scheme for simplicity
+	File    Scheme = "file"
+	Pipe    Scheme = "pipe"
+	Unix    Scheme = "unix"
+	TCP     Scheme = "tcp"
+	UDP     Scheme = "udp"
+)
+
+var Schemes = []Scheme{Default, File, Pipe, Unix, TCP, UDP}
 
 type URIHandler interface {
 	Open() error
@@ -33,7 +51,7 @@ type Status interface {
 }
 
 type URI struct {
-	Scheme string
+	Scheme Scheme
 	Host   string
 	Port   int
 	Path   string
@@ -46,25 +64,22 @@ func ParseURI(uri string) (*URI, error) {
 		return nil, err
 	}
 
-	if isFileLikeScheme(parsedURL.Scheme) {
-		return parseFileLikeURI(parsedURL)
+	if err = ValidateScheme(Scheme(parsedURL.Scheme)); err != nil {
+		fmt.Printf("Error validating scheme %s: %v\n", parsedURL.Scheme, err)
+		return nil, err
 	}
 
-	if !isSupportedScheme(parsedURL.Scheme) {
-		return nil, fmt.Errorf("unknown or unsupported scheme: %s", parsedURL.Scheme)
+	if isFileLikeScheme(parsedURL.Scheme) {
+		return parseFileLikeURI(parsedURL)
 	}
 
 	return parseNetworkURI(parsedURL)
 }
 
-func isFileLikeScheme(scheme string) bool {
-	return scheme == "" || scheme == "file" || scheme == "pipe" || scheme == "unix"
-}
-
 func parseFileLikeURI(parsedURL *url.URL) (*URI, error) {
-	scheme := parsedURL.Scheme
-	if scheme == "" {
-		scheme = "file"
+	scheme := Scheme(parsedURL.Scheme)
+	if scheme == Default {
+		scheme = File
 	}
 
 	absolutePath, err := filepath.Abs(parsedURL.Path)
@@ -88,20 +103,8 @@ func parseFileLikeURI(parsedURL *url.URL) (*URI, error) {
 	}, nil
 }
 
-func validateFileType(scheme string, mode os.FileMode) bool {
-	switch scheme {
-	case "file":
-		return mode.IsRegular()
-	case "pipe":
-		return mode&os.ModeNamedPipe != 0
-	case "unix":
-		return mode&os.ModeSocket != 0
-	default:
-		return false
-	}
-}
-
 func parseNetworkURI(parsedURL *url.URL) (*URI, error) {
+	scheme := Scheme(parsedURL.Scheme)
 	host := parsedURL.Hostname()
 	portStr := parsedURL.Port()
 
@@ -115,7 +118,7 @@ func parseNetworkURI(parsedURL *url.URL) (*URI, error) {
 	}
 
 	return &URI{
-		Scheme: parsedURL.Scheme,
+		Scheme: scheme,
 		Host:   host,
 		Port:   port,
 		Path:   parsedURL.Path,
@@ -123,10 +126,27 @@ func parseNetworkURI(parsedURL *url.URL) (*URI, error) {
 	}, nil
 }
 
-func isSupportedScheme(scheme string) bool {
+// ValidateScheme checks if the given scheme is valid
+func ValidateScheme(s Scheme) error {
+	fmt.Printf("Validating scheme: %s\n", s)
+	if slices.Contains(Schemes, s) {
+		return nil
+	}
+	return errors.New("invalid scheme: " + string(s))
+}
+
+func isFileLikeScheme(scheme string) bool {
+	return slices.Contains([]Scheme{Default, File, Pipe, Unix}, Scheme(scheme))
+}
+
+func validateFileType(scheme Scheme, mode os.FileMode) bool {
 	switch scheme {
-	case "tcp", "udp":
-		return true
+	case File:
+		return mode.IsRegular()
+	case Pipe:
+		return mode&os.ModeNamedPipe != 0
+	case Unix:
+		return mode&os.ModeSocket != 0
 	default:
 		return false
 	}

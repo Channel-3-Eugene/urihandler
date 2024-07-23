@@ -90,9 +90,9 @@ func TestParseURI(t *testing.T) {
 		},
 		{
 			name:     "Unknown Scheme",
-			input:    "invalid://localhost",
+			input:    "notascheme://localhost",
 			expected: nil,
-			err:      "unknown or unsupported scheme: invalid",
+			err:      "invalid scheme: notascheme",
 		},
 		{
 			name:  "Implicit File Path",
@@ -107,7 +107,7 @@ func TestParseURI(t *testing.T) {
 			err: "",
 		},
 		{
-			name:  "Non-Existent File Path",
+			name:  "Non-Existent Implicit File Path",
 			input: "/tmp/nonexistentfile",
 			expected: &URI{
 				Scheme: "file",
