@@ -2,7 +2,6 @@ package urihandler
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -18,18 +17,14 @@ type SocketStatus struct {
 	WriteDeadline time.Duration
 }
 
-// GetMode returns the mode of the socket.
-func (s SocketStatus) GetMode() Mode { return s.Mode }
-
-// GetRole returns the role of the socket.
-func (s SocketStatus) GetRole() Role { return s.Role }
-
-// GetAddress returns the address the socket is bound to.
+// Getter methods for SocketStatus
+func (s SocketStatus) GetMode() Mode      { return s.Mode }
+func (s SocketStatus) GetRole() Role      { return s.Role }
 func (s SocketStatus) GetAddress() string { return s.Address }
 
-// SocketHandler manages socket connections, providing methods to open, close, and manage streams.
+// SocketHandler manages Unix socket connections, providing methods to open, close, and manage streams.
 type SocketHandler struct {
-	socketPath    string
+	address       string
 	readDeadline  time.Duration
 	writeDeadline time.Duration
 	mode          Mode
@@ -38,88 +33,96 @@ type SocketHandler struct {
 	dataChannel   chan []byte
 	events        chan error
 	connections   map[net.Conn]struct{}
-	mu            sync.RWMutex // Use RWMutex to allow concurrent reads
+	mu            sync.RWMutex
 	status        SocketStatus
 }
 
-// NewSocketHandler creates and initializes a new SocketHandler with the specified parameters.
-func NewSocketHandler(mode Mode, role Role, dataChannel chan []byte, events chan error, socketPath string, readDeadline, writeDeadline time.Duration) *SocketHandler {
-	return &SocketHandler{
+// NewSocketHandler initializes a new SocketHandler with the specified settings.
+func NewSocketHandler(
+	mode Mode,
+	role Role,
+	dataChannel chan []byte,
+	events chan error,
+	address string,
+	readDeadline,
+	writeDeadline time.Duration,
+) interface{} {
+	handler := &SocketHandler{
 		mode:          mode,
 		role:          role,
 		dataChannel:   dataChannel,
 		events:        events,
-		socketPath:    socketPath,
+		address:       address,
 		readDeadline:  readDeadline,
 		writeDeadline: writeDeadline,
 		connections:   make(map[net.Conn]struct{}),
 		status: SocketStatus{
-			Address:       socketPath,
 			Mode:          mode,
 			Role:          role,
-			Connections:   []string{},
+			Address:       address,
 			ReadDeadline:  readDeadline,
 			WriteDeadline: writeDeadline,
+			Connections:   []string{},
 		},
 	}
+	return handler
 }
 
-// Open initializes the socket's server or client based on its mode.
-func (h *SocketHandler) Open() error {
-	if h.mode == Client {
-		go h.connectClient()
-		return nil
-	} else if h.mode == Server {
-		ln, err := net.Listen("unix", h.socketPath)
-		if err != nil {
-			h.SendError(fmt.Errorf("error creating socket: %w", err))
-			return err
-		}
-		h.mu.Lock()
-		h.listener = ln
-		h.status.Address = ln.Addr().String()
-		h.mu.Unlock()
-		go h.startServer()
-		return nil
-	}
-	return fmt.Errorf("invalid mode: %v", h.mode)
+func (h *SocketHandler) GetDataChannel() chan []byte {
+	return h.dataChannel
 }
 
-// Status returns the current status of the socket.
+func (h *SocketHandler) GetEventsChannel() chan error {
+	return h.events
+}
+
+// socketBufferPool is a pool of byte slices used to reduce garbage collection overhead.
+var socketBufferPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 4096)
+		return &b
+	},
+}
+
+// Status returns the current status of the SocketHandler.
 func (h *SocketHandler) Status() SocketStatus {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	connections := []string{} // Reset the list
+	connections := make([]string, 0, len(h.connections))
 	for conn := range h.connections {
-		// Using remote address or local if remote not available
-		connDesc := conn.RemoteAddr().String()
-		if connDesc == "" {
-			connDesc = conn.LocalAddr().String()
-		}
-		connections = append(connections, connDesc)
+		connections = append(connections, conn.RemoteAddr().String())
 	}
+
 	h.status.Connections = connections
+	h.status.Address = h.address
 
 	return h.status
 }
 
-// connectClient manages the client connection to the server.
-func (h *SocketHandler) connectClient() {
-	conn, err := net.Dial("unix", h.socketPath)
-	if err != nil {
-		h.SendError(fmt.Errorf("error connecting to socket: %w", err))
-		return
+// Open starts the SocketHandler, setting up a Unix socket connection for sending or receiving data.
+func (h *SocketHandler) Open() error {
+	if h.mode == Server {
+		ln, err := net.Listen("unix", h.address)
+		if err != nil {
+			return fmt.Errorf("error creating socket: %w", err)
+		}
+		h.listener = ln
+		go h.acceptConnections()
+	} else if h.mode == Client {
+		conn, err := net.Dial("unix", h.address)
+		if err != nil {
+			return fmt.Errorf("error connecting to socket: %w", err)
+		}
+		h.mu.Lock()
+		h.connections[conn] = struct{}{}
+		h.mu.Unlock()
+		go h.manageStream(conn)
 	}
-	h.mu.Lock()
-	h.connections[conn] = struct{}{}
-	h.mu.Unlock()
-
-	h.manageStream(conn)
+	return nil
 }
 
-// startServer starts the socket server and listens for incoming connections.
-func (h *SocketHandler) startServer() {
+func (h *SocketHandler) acceptConnections() {
 	for {
 		conn, err := h.listener.Accept()
 		if err != nil {
@@ -169,23 +172,25 @@ func (h *SocketHandler) handleWrite(conn net.Conn) {
 
 // handleRead manages reading data from the connection.
 func (h *SocketHandler) handleRead(conn net.Conn) {
-	readBuffer := make([]byte, 4096) // Buffer size can be adjusted as needed
-	if h.readDeadline > 0 {
-		conn.SetReadDeadline(time.Now().Add(h.readDeadline))
-	}
 	for {
-		n, err := conn.Read(readBuffer)
+		buffer := socketBufferPool.Get().(*[]byte)
+		*buffer = (*buffer)[:cap(*buffer)] // Ensure the buffer is fully utilized
+
+		if h.readDeadline > 0 {
+			conn.SetReadDeadline(time.Now().Add(h.readDeadline))
+		}
+		n, err := conn.Read(*buffer)
 		if err != nil {
-			if err != io.EOF {
-				h.SendError(err)
-			}
+			socketBufferPool.Put(buffer)
+			h.SendError(err)
 			break // Exit on error or when EOF is reached
 		}
-		h.dataChannel <- readBuffer[:n]
+		h.dataChannel <- (*buffer)[:n]
+		socketBufferPool.Put(buffer)
 	}
 }
 
-// Close shuts down the socket and cleans up resources.
+// Close terminates the handler's operations and closes the Unix socket connection.
 func (h *SocketHandler) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -21,88 +21,101 @@ type FileStatus struct {
 	IsOpen       bool
 }
 
-// GetMode returns the operation mode of the file handler.
-func (f FileStatus) GetMode() Mode { return f.Mode }
-
-// GetRole returns the operational role of the file handler.
-func (f FileStatus) GetRole() Role { return f.Role }
-
-// GetAddress returns the file path associated with the file handler.
+// Getter methods for FileStatus
+func (f FileStatus) GetMode() Mode      { return f.Mode }
+func (f FileStatus) GetRole() Role      { return f.Role }
 func (f FileStatus) GetAddress() string { return f.FilePath }
 
 // FileHandler manages the operations for a file, supporting both regular file operations and FIFO-based interactions.
 type FileHandler struct {
 	filePath     string
 	file         *os.File
-	channel      chan []byte
+	dataChannel  chan []byte
 	events       chan error
 	mode         Mode
 	role         Role
 	isFIFO       bool
 	readTimeout  time.Duration
 	writeTimeout time.Duration
-	isOpen       bool         // Tracks the open or closed state of the file.
+	isOpen       bool
 	mu           sync.RWMutex // Use RWMutex to allow concurrent reads
+	status       FileStatus
 }
 
 // NewFileHandler creates a new FileHandler with specified configurations.
-func NewFileHandler(mode Mode, role Role, ch chan []byte, events chan error, filePath string, isFIFO bool, readTimeout, writeTimeout time.Duration) *FileHandler {
-	return &FileHandler{
+func NewFileHandler(
+	mode Mode,
+	role Role,
+	dataChannel chan []byte,
+	events chan error,
+	filePath string,
+	isFIFO bool,
+	readTimeout,
+	writeTimeout time.Duration,
+) interface{} {
+	handler := &FileHandler{
 		mode:         mode,
 		role:         role,
-		channel:      ch,
+		dataChannel:  dataChannel,
 		events:       events,
 		filePath:     filePath,
 		isFIFO:       isFIFO,
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
+		status: FileStatus{
+			FilePath:     filePath,
+			IsFIFO:       isFIFO,
+			Mode:         mode,
+			Role:         role,
+			ReadTimeout:  readTimeout,
+			WriteTimeout: writeTimeout,
+			IsOpen:       false,
+		},
 	}
+	return handler
+}
+
+func (h *FileHandler) GetDataChannel() chan []byte {
+	return h.dataChannel
+}
+
+func (h *FileHandler) SetDataChannel(dataChannel chan []byte) {
+	h.dataChannel = dataChannel
 }
 
 // Status provides the current status of the FileHandler.
 func (h *FileHandler) Status() FileStatus {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return FileStatus{
-		FilePath:     h.filePath,
-		IsFIFO:       h.isFIFO,
-		Mode:         h.mode,
-		Role:         h.role,
-		ReadTimeout:  h.readTimeout,
-		WriteTimeout: h.writeTimeout,
-		IsOpen:       h.isOpen,
-	}
+	h.status.IsOpen = h.isOpen
+	return h.status
 }
 
 // Open initializes the file handler by opening or creating the file and starting the appropriate data processing goroutines.
 func (h *FileHandler) Open() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	var err error
-	// Check if the file exists; if not, create it or initialize a FIFO.
 	if _, err = os.Stat(h.filePath); os.IsNotExist(err) {
 		if h.isFIFO {
 			if err = syscall.Mkfifo(h.filePath, 0666); err != nil {
 				return err
 			}
 		} else {
-			h.mu.Lock()
 			h.file, err = os.Create(h.filePath)
-			h.mu.Unlock()
 			if err != nil {
 				return err
 			}
 		}
 	} else {
-		h.mu.Lock()
 		h.file, err = os.OpenFile(h.filePath, os.O_APPEND|os.O_CREATE, 0666)
-		h.mu.Unlock()
 		if err != nil {
 			return err
 		}
 	}
 
-	h.mu.Lock()
-	h.isOpen = true // Mark the file as open.
-	h.mu.Unlock()
+	h.isOpen = true
 
 	if h.role == Reader {
 		go h.readData()
@@ -119,17 +132,18 @@ func (h *FileHandler) Close() error {
 
 	if h.file != nil {
 		err := h.file.Close()
-		h.isOpen = false // Update the state to closed.
+		h.isOpen = false
 		if h.isFIFO {
-			syscall.Unlink(h.filePath) // Remove the FIFO file.
+			syscall.Unlink(h.filePath)
 		}
-		h.channel = nil
+		close(h.dataChannel)
 		return err
 	}
 	return nil
 }
 
-var bufferPool = sync.Pool{
+// fileBufferPool is a pool of byte slices used to reduce garbage collection overhead.
+var fileBufferPool = sync.Pool{
 	New: func() interface{} {
 		b := make([]byte, 4096)
 		return &b
@@ -138,79 +152,58 @@ var bufferPool = sync.Pool{
 
 // readData handles the data reading operations from the file based on configured timeouts.
 func (h *FileHandler) readData() {
-	var err error
-	h.mu.Lock()
-	if h.file == nil {
-		h.file, err = os.Open(h.filePath)
-	}
-	h.mu.Unlock()
-	if err != nil {
-		h.SendError(err)
-		return
-	}
 	defer h.file.Close()
 
 	for {
-		buffer := bufferPool.Get().(*[]byte)
+		buffer := fileBufferPool.Get().(*[]byte)
 		*buffer = (*buffer)[:cap(*buffer)] // Ensure the buffer is fully utilized
 
 		if h.readTimeout > 0 {
 			select {
 			case <-time.After(h.readTimeout):
-				bufferPool.Put(buffer)
+				fileBufferPool.Put(buffer)
 				h.SendError(errors.New("file read operation timed out"))
-				return // Exit the goroutine after a timeout.
+				return
 			default:
 				n, err := h.file.Read(*buffer)
 				if err != nil {
 					if err == io.EOF || err == syscall.EINTR {
-						bufferPool.Put(buffer)
+						fileBufferPool.Put(buffer)
 						continue
 					}
-					bufferPool.Put(buffer)
+					fileBufferPool.Put(buffer)
 					h.SendError(err)
 					return
 				}
 				if n > 0 {
-					h.channel <- (*buffer)[:n] // Only send the valid portion
+					h.dataChannel <- (*buffer)[:n]
 				}
-				bufferPool.Put(buffer)
+				fileBufferPool.Put(buffer)
 			}
 		} else {
 			n, err := h.file.Read(*buffer)
 			if err != nil {
 				if err == io.EOF || err == syscall.EINTR {
-					bufferPool.Put(buffer)
+					fileBufferPool.Put(buffer)
 					continue
 				}
-				bufferPool.Put(buffer)
+				fileBufferPool.Put(buffer)
 				h.SendError(err)
 				return
 			}
 			if n > 0 {
-				h.channel <- (*buffer)[:n] // Only send the valid portion
+				h.dataChannel <- (*buffer)[:n]
 			}
-			bufferPool.Put(buffer)
+			fileBufferPool.Put(buffer)
 		}
 	}
 }
 
 // writeData handles the data writing operations to the file based on configured timeouts.
 func (h *FileHandler) writeData() {
-	var err error
-	h.mu.Lock()
-	if h.file == nil {
-		h.file, err = os.OpenFile(h.filePath, os.O_WRONLY|os.O_CREATE, 0666)
-	}
-	h.mu.Unlock()
-	if err != nil {
-		h.SendError(err)
-		return
-	}
-
 	defer h.file.Close()
 
-	for data := range h.channel {
+	for data := range h.dataChannel {
 		if h.writeTimeout > 0 {
 			writeDone := make(chan struct{})
 			go func() {
@@ -223,10 +216,9 @@ func (h *FileHandler) writeData() {
 
 			select {
 			case <-writeDone:
-				// Write completed
 			case <-time.After(h.writeTimeout):
 				h.SendError(errors.New("file write operation timed out"))
-				return // Exit the goroutine after a timeout.
+				return
 			}
 		} else {
 			_, err := h.file.Write(data)

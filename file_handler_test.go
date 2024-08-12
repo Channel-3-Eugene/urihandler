@@ -3,7 +3,6 @@ package urihandler
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -13,19 +12,13 @@ import (
 
 // TestFileHandler_New verifies that a new FileHandler is correctly initialized with specified parameters.
 func TestFileHandler_New(t *testing.T) {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start)
-		fmt.Printf("TestFileHandler_New took %v\n", duration)
-	}()
-
 	filePath := randFileName()
 	readTimeout := 5 * time.Millisecond
 	writeTimeout := 5 * time.Millisecond
 	channel := make(chan []byte)
 	events := make(chan error)
 
-	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, readTimeout, writeTimeout)
+	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, readTimeout, writeTimeout).(*FileHandler)
 
 	// Assert that all properties are set as expected.
 	assert.Equal(t, filePath, handler.filePath)
@@ -37,12 +30,6 @@ func TestFileHandler_New(t *testing.T) {
 
 // TestFileHandler_OpenAndClose tests the Open and Close methods of the FileHandler to ensure files are correctly managed.
 func TestFileHandler_OpenAndClose(t *testing.T) {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start)
-		fmt.Printf("TestFileHandler_OpenAndClose took %v\n", duration)
-	}()
-
 	filePath := randFileName()
 
 	// Ensure any existing file with the same name is removed before starting the test.
@@ -51,7 +38,7 @@ func TestFileHandler_OpenAndClose(t *testing.T) {
 	events := make(chan error)
 
 	// Open the handler and verify that the file exists after opening.
-	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, 0, 0)
+	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, 0, 0).(*FileHandler)
 	err := handler.Open()
 	assert.Nil(t, err)
 	assert.FileExists(t, filePath)
@@ -71,17 +58,11 @@ func TestFileHandler_OpenAndClose(t *testing.T) {
 
 // TestFileHandler_FIFO checks the functionality of the FileHandler with FIFO specific operations.
 func TestFileHandler_FIFO(t *testing.T) {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start)
-		fmt.Printf("TestFileHandler_FIFO took %v\n", duration)
-	}()
-
 	filePath := randFileName()
 	channel := make(chan []byte)
 	events := make(chan error)
 
-	handler := NewFileHandler(Peer, Reader, channel, events, filePath, true, 1, 1)
+	handler := NewFileHandler(Peer, Reader, channel, events, filePath, true, 1, 1).(*FileHandler)
 
 	// Open the handler as a FIFO and ensure the FIFO file exists.
 	err := handler.Open()
@@ -89,31 +70,34 @@ func TestFileHandler_FIFO(t *testing.T) {
 	_, err = os.Stat(filePath)
 	assert.Nil(t, err)
 
-	// Test opening the FIFO by another process to simulate a writer.
-	writer, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE, 0666)
-	assert.Nil(t, err)
-	writer.Close()
+	// Use a goroutine to open the FIFO as a writer to prevent blocking.
+	go func() {
+		writer, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE, 0666)
+		assert.Nil(t, err)
+		writer.Close()
+	}()
+
+	// Allow some time for the writer to open and complete.
+	time.Sleep(100 * time.Millisecond)
+
+	// Clean up the created FIFO after the test.
+	handler.Close()
+	os.Remove(filePath)
 }
 
 // TestFileHandler_DataFlow tests the complete cycle of writing to and reading from the file.
 func TestFileHandler_DataFlow(t *testing.T) {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start)
-		fmt.Printf("TestFileHandler_DataFlow took %v\n", duration)
-	}()
-
 	filePath := randFileName()
 	readChannel := make(chan []byte)
 	writeChannel := make(chan []byte)
 	events := make(chan error)
 
 	// Initialize writer and reader handlers.
-	writer := NewFileHandler(Peer, Writer, writeChannel, events, filePath, false, 0, 0)
+	writer := NewFileHandler(Peer, Writer, writeChannel, events, filePath, false, 0, 0).(*FileHandler)
 	writer.Open()
 	defer writer.Close()
 
-	reader := NewFileHandler(Peer, Reader, readChannel, events, filePath, false, 0, 0)
+	reader := NewFileHandler(Peer, Reader, readChannel, events, filePath, false, 0, 0).(*FileHandler)
 	reader.Open()
 	defer reader.Close()
 

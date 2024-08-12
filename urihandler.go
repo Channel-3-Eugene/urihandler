@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 )
 
@@ -39,6 +38,8 @@ var Schemes = []Scheme{Default, File, Pipe, Unix, TCP, UDP}
 
 type URIHandler interface {
 	Open() error
+	GetDataChannel() chan []byte
+	GetEventsChannel() chan error
 	Close() error
 	Status() interface{}
 }
@@ -56,6 +57,11 @@ type URI struct {
 	Port   int
 	Path   string
 	Exists bool
+	string string
+}
+
+func (u *URI) String() string {
+	return u.string
 }
 
 func ParseURI(uri string) (*URI, error) {
@@ -69,74 +75,82 @@ func ParseURI(uri string) (*URI, error) {
 		return nil, err
 	}
 
-	if isFileLikeScheme(parsedURL.Scheme) {
-		return parseFileLikeURI(parsedURL)
-	}
-
-	return parseNetworkURI(parsedURL)
-}
-
-func parseFileLikeURI(parsedURL *url.URL) (*URI, error) {
-	scheme := Scheme(parsedURL.Scheme)
-	if scheme == Default {
-		scheme = File
-	}
-
-	absolutePath, err := filepath.Abs(parsedURL.Path)
+	newURI, err := parseSpecificURI(parsedURL)
 	if err != nil {
 		return nil, err
 	}
 
-	fileInfo, err := os.Stat(absolutePath)
-	exists := err == nil || !os.IsNotExist(err)
-
-	if exists {
-		exists = validateFileType(scheme, fileInfo.Mode())
-	}
-
-	return &URI{
-		Scheme: scheme,
-		Host:   "",
-		Port:   0,
-		Path:   absolutePath,
-		Exists: exists,
-	}, nil
+	newURI.string = parsedURL.String()
+	fmt.Printf("Parsed URI: %v\n", newURI)
+	return newURI, nil
 }
 
-func parseNetworkURI(parsedURL *url.URL) (*URI, error) {
+func parseSpecificURI(parsedURL *url.URL) (*URI, error) {
 	scheme := Scheme(parsedURL.Scheme)
-	host := parsedURL.Hostname()
-	portStr := parsedURL.Port()
+	host := ""
+	port := 0
+	path := parsedURL.Path
+	exists := true
 
-	if portStr == "" {
-		return nil, fmt.Errorf("port must be specified for %s scheme", parsedURL.Scheme)
-	}
+	if isFileLikeScheme(parsedURL.Scheme) {
+		if scheme == Default {
+			scheme = File
+		}
 
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid port: %v", err)
+		absolutePath, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		path = absolutePath
+
+		fileInfo, err := os.Stat(absolutePath)
+		exists = err == nil || !os.IsNotExist(err)
+		if exists {
+			exists = validateFileType(scheme, fileInfo.Mode())
+		}
+	} else {
+		host = parsedURL.Hostname()
+		portStr := parsedURL.Port()
+
+		if portStr == "" {
+			return nil, fmt.Errorf("port must be specified for %s scheme", parsedURL.Scheme)
+		}
+
+		parsedPort, err := strconv.Atoi(portStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid port: %v", err)
+		}
+		port = parsedPort
 	}
 
 	return &URI{
 		Scheme: scheme,
 		Host:   host,
 		Port:   port,
-		Path:   parsedURL.Path,
-		Exists: true, // Network URIs are assumed to exist for the purpose of URI parsing
+		Path:   path,
+		Exists: exists,
 	}, nil
 }
 
 // ValidateScheme checks if the given scheme is valid
 func ValidateScheme(s Scheme) error {
 	fmt.Printf("Validating scheme: %s\n", s)
-	if slices.Contains(Schemes, s) {
-		return nil
+	for _, validScheme := range Schemes {
+		if validScheme == s {
+			return nil
+		}
 	}
 	return errors.New("invalid scheme: " + string(s))
 }
 
 func isFileLikeScheme(scheme string) bool {
-	return slices.Contains([]Scheme{Default, File, Pipe, Unix}, Scheme(scheme))
+	fileLikeSchemes := []Scheme{Default, File, Pipe, Unix}
+	for _, fileLikeScheme := range fileLikeSchemes {
+		if Scheme(scheme) == fileLikeScheme {
+			return true
+		}
+	}
+	return false
 }
 
 func validateFileType(scheme Scheme, mode os.FileMode) bool {

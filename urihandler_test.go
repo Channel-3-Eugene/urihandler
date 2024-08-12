@@ -4,9 +4,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
 	"syscall"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseURI(t *testing.T) {
@@ -25,6 +26,7 @@ func TestParseURI(t *testing.T) {
 				Port:   9999,
 				Path:   "",
 				Exists: true,
+				string: "tcp://localhost:9999",
 			},
 			err: "",
 		},
@@ -37,6 +39,7 @@ func TestParseURI(t *testing.T) {
 				Port:   8888,
 				Path:   "",
 				Exists: true,
+				string: "udp://localhost:8888",
 			},
 			err: "",
 		},
@@ -49,6 +52,7 @@ func TestParseURI(t *testing.T) {
 				Port:   0,
 				Path:   "/tmp/validfilepath",
 				Exists: true,
+				string: "file:///tmp/validfilepath",
 			},
 			err: "",
 		},
@@ -61,6 +65,7 @@ func TestParseURI(t *testing.T) {
 				Port:   0,
 				Path:   "/tmp/mypipe",
 				Exists: true,
+				string: "pipe:///tmp/mypipe",
 			},
 			err: "",
 		},
@@ -73,6 +78,7 @@ func TestParseURI(t *testing.T) {
 				Port:   0,
 				Path:   "/tmp/mysocket",
 				Exists: true,
+				string: "unix:///tmp/mysocket",
 			},
 			err: "",
 		},
@@ -103,6 +109,7 @@ func TestParseURI(t *testing.T) {
 				Port:   0,
 				Path:   "/tmp/validfilepath",
 				Exists: true,
+				string: "/tmp/validfilepath",
 			},
 			err: "",
 		},
@@ -115,6 +122,7 @@ func TestParseURI(t *testing.T) {
 				Port:   0,
 				Path:   "/tmp/nonexistentfile",
 				Exists: false,
+				string: "/tmp/nonexistentfile",
 			},
 			err: "",
 		},
@@ -146,9 +154,85 @@ func TestParseURI(t *testing.T) {
 					result.Path = normalizePath(result.Path)
 					test.expected.Path = normalizePath(test.expected.Path)
 				}
-				if !reflect.DeepEqual(result, test.expected) {
-					t.Errorf("expected %v, got %v", test.expected, result)
-				}
+				// Test using the String() method
+				assert.Equal(t, test.expected.String(), result.String(), "expected string %v, got %v", test.expected.string, result.String())
+			}
+		})
+	}
+}
+
+func TestURIStructStringMethod(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    *URI
+		expected string
+	}{
+		{
+			name: "TCP URI",
+			input: &URI{
+				Scheme: "tcp",
+				Host:   "localhost",
+				Port:   9999,
+				Path:   "",
+				Exists: true,
+				string: "tcp://localhost:9999",
+			},
+			expected: "tcp://localhost:9999",
+		},
+		{
+			name: "UDP URI",
+			input: &URI{
+				Scheme: "udp",
+				Host:   "localhost",
+				Port:   8888,
+				Path:   "",
+				Exists: true,
+				string: "udp://localhost:8888",
+			},
+			expected: "udp://localhost:8888",
+		},
+		{
+			name: "File URI",
+			input: &URI{
+				Scheme: "file",
+				Host:   "",
+				Port:   0,
+				Path:   "/tmp/validfilepath",
+				Exists: true,
+				string: "file:///tmp/validfilepath",
+			},
+			expected: "file:///tmp/validfilepath",
+		},
+		{
+			name: "Pipe URI",
+			input: &URI{
+				Scheme: "pipe",
+				Host:   "",
+				Port:   0,
+				Path:   "/tmp/mypipe",
+				Exists: true,
+				string: "pipe:///tmp/mypipe",
+			},
+			expected: "pipe:///tmp/mypipe",
+		},
+		{
+			name: "Unix Socket URI",
+			input: &URI{
+				Scheme: "unix",
+				Host:   "",
+				Port:   0,
+				Path:   "/tmp/mysocket",
+				Exists: true,
+				string: "unix:///tmp/mysocket",
+			},
+			expected: "unix:///tmp/mysocket",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if result := test.input.String(); result != test.expected {
+				t.Errorf("expected %v, got %v", test.expected, result)
 			}
 		})
 	}

@@ -47,8 +47,16 @@ type TCPHandler struct {
 }
 
 // NewTCPHandler creates a new instance of TCPHandler with the specified configuration.
-func NewTCPHandler(mode Mode, role Role, dataChannel chan []byte, events chan error, address string, readDeadline, writeDeadline time.Duration) *TCPHandler {
-	h := &TCPHandler{
+func NewTCPHandler(
+	mode Mode,
+	role Role,
+	dataChannel chan []byte,
+	events chan error,
+	address string,
+	readDeadline,
+	writeDeadline time.Duration,
+) interface{} {
+	handler := &TCPHandler{
 		mode:          mode,
 		role:          role,
 		dataChannel:   dataChannel,
@@ -60,14 +68,30 @@ func NewTCPHandler(mode Mode, role Role, dataChannel chan []byte, events chan er
 	}
 
 	// Initialize TCPStatus with default values.
-	h.status = TCPStatus{
+	handler.status = TCPStatus{
 		Address:     address,
 		Mode:        mode,
 		Role:        role,
 		Connections: make(map[string]string),
 	}
 
-	return h
+	return handler
+}
+
+func (h *TCPHandler) GetDataChannel() chan []byte {
+	return h.dataChannel
+}
+
+func (h *TCPHandler) GetEventsChannel() chan error {
+	return h.events
+}
+
+// tcpBufferPool is a pool of byte slices used to reduce garbage collection overhead.
+var tcpBufferPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 4096)
+		return &b
+	},
 }
 
 // Open starts the TCPHandler instance based on its operational mode.
@@ -81,7 +105,7 @@ func (h *TCPHandler) Open() error {
 }
 
 // Status returns the current status of the TCPHandler.
-func (h *TCPHandler) Status() TCPStatus {
+func (h *TCPHandler) Status() interface{} {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -156,13 +180,13 @@ func (h *TCPHandler) manageStream(conn net.Conn) {
 
 // handleWrite manages writing data to the TCP connection.
 func (h *TCPHandler) handleWrite(conn net.Conn) {
-	if h.writeDeadline > 0 {
-		conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
-	}
 	for {
 		message, ok := <-h.dataChannel
 		if !ok {
 			break // Channel closed
+		}
+		if h.writeDeadline > 0 {
+			conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
 		}
 		_, err := conn.Write(message)
 		if err != nil {
@@ -174,17 +198,21 @@ func (h *TCPHandler) handleWrite(conn net.Conn) {
 
 // handleRead manages reading data from the TCP connection.
 func (h *TCPHandler) handleRead(conn net.Conn) {
-	if h.readDeadline > 0 {
-		conn.SetReadDeadline(time.Now().Add(h.readDeadline))
-	}
-	readBuffer := make([]byte, 4096)
 	for {
-		n, err := conn.Read(readBuffer)
+		buffer := tcpBufferPool.Get().(*[]byte)
+		*buffer = (*buffer)[:cap(*buffer)] // Ensure the buffer is fully utilized
+
+		if h.readDeadline > 0 {
+			conn.SetReadDeadline(time.Now().Add(h.readDeadline))
+		}
+		n, err := conn.Read(*buffer)
 		if err != nil {
+			tcpBufferPool.Put(buffer)
 			h.SendError(err)
 			break
 		}
-		h.dataChannel <- readBuffer[:n]
+		h.dataChannel <- (*buffer)[:n]
+		tcpBufferPool.Put(buffer)
 	}
 }
 

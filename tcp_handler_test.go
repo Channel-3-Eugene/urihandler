@@ -19,7 +19,7 @@ func TestTCPHandler_New(t *testing.T) {
 
 	dataChannel := make(chan []byte)
 	events := make(chan error)
-	handler := NewTCPHandler(Server, Reader, dataChannel, events, ":0", 0, 0)
+	handler := NewTCPHandler(Server, Reader, dataChannel, events, ":0", 0, 0).(*TCPHandler)
 	assert.Equal(t, ":0", handler.address)
 	assert.Equal(t, 0*time.Second, handler.readDeadline)
 	assert.Equal(t, 0*time.Second, handler.writeDeadline)
@@ -41,18 +41,19 @@ func TestTCPHandler_ServerWriterClientReader(t *testing.T) {
 	readerChannel := make(chan []byte)
 	events := make(chan error)
 
-	serverWriter := NewTCPHandler(Server, Writer, writerChannel, events, ":0", 0, 0)
+	serverWriter := NewTCPHandler(Server, Writer, writerChannel, events, ":0", 0, 0).(*TCPHandler)
 	err := serverWriter.Open()
 	assert.Nil(t, err)
 
-	serverWriterAddr := serverWriter.Status().Address
+	status := serverWriter.Status().(TCPStatus)
+	serverWriterAddr := status.Address
 
-	clientReader := NewTCPHandler(Client, Reader, readerChannel, events, serverWriterAddr, 0, 0)
+	clientReader := NewTCPHandler(Client, Reader, readerChannel, events, serverWriterAddr, 0, 0).(*TCPHandler)
 	err = clientReader.Open()
 	assert.Nil(t, err)
 
 	t.Run("TestTCPHandler_Status", func(t *testing.T) {
-		status := serverWriter.Status()
+		status := serverWriter.Status().(TCPStatus)
 		assert.Equal(t, serverWriterAddr, status.Address)
 		assert.Equal(t, Server, status.Mode)
 		assert.Equal(t, Writer, status.Role)
@@ -90,22 +91,23 @@ func TestTCPHandler_ServerReaderClientWriter(t *testing.T) {
 	readerChannel := make(chan []byte)
 	events := make(chan error)
 
-	serverReader := NewTCPHandler(Server, Reader, readerChannel, events, ":0", 0, 0)
+	serverReader := NewTCPHandler(Server, Reader, readerChannel, events, ":0", 0, 0).(*TCPHandler)
 	err := serverReader.Open()
 	assert.Nil(t, err)
 
-	serverReaderAddr := serverReader.Status().Address
+	status := serverReader.Status().(TCPStatus)
+	serverReaderAddr := status.Address
 
-	clientWriter := NewTCPHandler(Client, Writer, writerChannel, events, serverReaderAddr, 0, 0)
+	clientWriter := NewTCPHandler(Client, Writer, writerChannel, events, serverReaderAddr, 0, 0).(*TCPHandler)
 	err = clientWriter.Open()
 	assert.Nil(t, err)
 
 	t.Run("TestTCPHandler_Status", func(t *testing.T) {
-		status := serverReader.Status()
+		status := serverReader.Status().(TCPStatus)
 		assert.Equal(t, Server, status.Mode)
 		assert.Equal(t, Reader, status.Role)
 
-		status = clientWriter.Status()
+		status = clientWriter.Status().(TCPStatus)
 		assert.Equal(t, serverReaderAddr, status.Address)
 		assert.Equal(t, Client, status.Mode)
 		assert.Equal(t, Writer, status.Role)

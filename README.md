@@ -182,3 +182,4 @@ This project is licensed under the BSD 3 clause license.
 ## TODO
 
 [ ] Remove tribd/channels reliance
+[ ] Configurable PCR to PTS/DTS gap control

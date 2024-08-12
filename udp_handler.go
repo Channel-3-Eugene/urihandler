@@ -40,7 +40,17 @@ type UDPHandler struct {
 }
 
 // NewUDPHandler initializes a new UDPHandler with specified settings.
-func NewUDPHandler(mode Mode, role Role, dataChannel chan []byte, events chan error, address string, readDeadline, writeDeadline time.Duration, sources, destinations []string) *UDPHandler {
+func NewUDPHandler(
+	mode Mode,
+	role Role,
+	dataChannel chan []byte,
+	events chan error,
+	address string,
+	readDeadline,
+	writeDeadline time.Duration,
+	sources,
+	destinations []string,
+) interface{} {
 	handler := &UDPHandler{
 		mode:           mode,
 		role:           role,
@@ -79,6 +89,22 @@ func NewUDPHandler(mode Mode, role Role, dataChannel chan []byte, events chan er
 	return handler
 }
 
+func (h *UDPHandler) GetDataChannel() chan []byte {
+	return h.dataChannel
+}
+
+func (h *UDPHandler) GetEventsChannel() chan error {
+	return h.events
+}
+
+// udpBufferPool is a pool of byte slices used to reduce garbage collection overhead.
+var udpBufferPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 2048)
+		return &b
+	},
+}
+
 // Status returns the current status of the UDPHandler.
 func (h *UDPHandler) Status() UDPStatus {
 	h.mu.RLock()
@@ -97,7 +123,9 @@ func (h *UDPHandler) Status() UDPStatus {
 
 	h.status.AllowedSources = sources
 	h.status.Destinations = destinations
-	h.status.Address = h.conn.LocalAddr().String()
+	if h.conn != nil {
+		h.status.Address = h.conn.LocalAddr().String()
+	}
 
 	return h.status
 }
@@ -167,10 +195,6 @@ func (h *UDPHandler) RemoveDestination(addr string) error {
 func (h *UDPHandler) sendData() {
 	defer h.conn.Close()
 
-	if h.writeDeadline > 0 {
-		h.conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
-	}
-
 	for {
 		message, ok := <-h.dataChannel
 		if !ok {
@@ -178,6 +202,9 @@ func (h *UDPHandler) sendData() {
 		}
 
 		for _, addr := range h.destinations {
+			if h.writeDeadline > 0 {
+				h.conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
+			}
 			_, err := h.conn.WriteToUDP(message, addr)
 			if err != nil {
 				h.SendError(err)
@@ -191,22 +218,16 @@ func (h *UDPHandler) sendData() {
 func (h *UDPHandler) receiveData() {
 	defer h.conn.Close()
 
-	if h.readDeadline > 0 {
-		h.conn.SetReadDeadline(time.Now().Add(h.readDeadline))
-	}
-
-	bufferPool := sync.Pool{
-		New: func() interface{} {
-			buffer := make([]byte, 2048)
-			return &buffer
-		},
-	}
-
 	for {
-		rawBuffer := bufferPool.Get().(*[]byte)
-		n, addr, err := h.conn.ReadFromUDP(*rawBuffer)
+		buffer := udpBufferPool.Get().(*[]byte)
+		*buffer = (*buffer)[:cap(*buffer)] // Ensure the buffer is fully utilized
+
+		if h.readDeadline > 0 {
+			h.conn.SetReadDeadline(time.Now().Add(h.readDeadline))
+		}
+		n, addr, err := h.conn.ReadFromUDP(*buffer)
 		if err != nil {
-			bufferPool.Put(rawBuffer)
+			udpBufferPool.Put(buffer)
 			h.SendError(err)
 			continue
 		}
@@ -216,12 +237,12 @@ func (h *UDPHandler) receiveData() {
 		h.mu.RUnlock()
 
 		if !ok {
-			bufferPool.Put(rawBuffer)
+			udpBufferPool.Put(buffer)
 			continue
 		}
 
-		h.dataChannel <- (*rawBuffer)[:n]
-		bufferPool.Put(rawBuffer)
+		h.dataChannel <- (*buffer)[:n]
+		udpBufferPool.Put(buffer)
 	}
 }
 

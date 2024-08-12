@@ -23,7 +23,17 @@ func TestUDPHandler_New(t *testing.T) {
 	events := make(chan error)
 
 	// Create a new UDPHandler with a listening address, read and write timeouts, and roles specified.
-	handler := NewUDPHandler(Peer, Reader, dataChannel, events, ":0", 10*time.Second, 5*time.Second, sources, destinations)
+	handler := NewUDPHandler(
+		Peer,
+		Reader,
+		dataChannel,
+		events,
+		":0",
+		10*time.Second,
+		5*time.Second,
+		sources,
+		destinations,
+	).(*UDPHandler)
 
 	// Assert the handler is initialized with the correct configurations.
 	assert.Equal(t, ":0", handler.address)
@@ -49,11 +59,11 @@ func TestUDPHandler_DataFlow(t *testing.T) {
 	events := make(chan error)
 
 	// Setup writer and reader handlers, each on separate local UDP addresses.
-	writer := NewUDPHandler(Peer, Writer, writeChannel, events, "[::1]:0", 0, 0, nil, nil)
+	writer := NewUDPHandler(Peer, Writer, writeChannel, events, "[::1]:0", 0, 0, nil, nil).(*UDPHandler)
 	err := writer.Open()
 	assert.Nil(t, err)
 
-	reader := NewUDPHandler(Peer, Reader, readChannel, events, "[::1]:0", 0, 0, nil, nil)
+	reader := NewUDPHandler(Peer, Reader, readChannel, events, "[::1]:0", 0, 0, nil, nil).(*UDPHandler)
 	err = reader.Open()
 	assert.Nil(t, err)
 

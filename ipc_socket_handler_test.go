@@ -21,12 +21,12 @@ func TestSocketHandler_New(t *testing.T) {
 	handler := NewSocketHandler(Server, Writer, dataChannel, events, socketPath, readDeadline, writeDeadline)
 
 	// Assert that all properties are set as expected.
-	assert.Equal(t, socketPath, handler.socketPath)
-	assert.Equal(t, Writer, handler.role)
-	assert.Equal(t, readDeadline, handler.readDeadline)
-	assert.Equal(t, writeDeadline, handler.writeDeadline)
-	assert.NotNil(t, handler.dataChannel)
-	assert.NotNil(t, handler.events)
+	assert.Equal(t, socketPath, handler.(*SocketHandler).address)
+	assert.Equal(t, Writer, handler.(*SocketHandler).role)
+	assert.Equal(t, readDeadline, handler.(*SocketHandler).readDeadline)
+	assert.Equal(t, writeDeadline, handler.(*SocketHandler).writeDeadline)
+	assert.NotNil(t, handler.(*SocketHandler).dataChannel)
+	assert.NotNil(t, handler.(*SocketHandler).events)
 }
 
 // TestSocketHandler_OpenAndClose tests the Open and Close methods of the SocketHandler to ensure sockets are correctly managed.
@@ -40,7 +40,7 @@ func TestSocketHandler_OpenAndClose(t *testing.T) {
 
 	// Open the handler and verify that the socket exists after opening.
 	handler := NewSocketHandler(Server, Writer, dataChannel, events, socketPath, 0, 0)
-	err := handler.Open()
+	err := handler.(*SocketHandler).Open()
 	assert.Nil(t, err)
 
 	// Give some time for the socket to be created
@@ -51,7 +51,7 @@ func TestSocketHandler_OpenAndClose(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Close the handler and check if the socket is properly closed.
-	err = handler.Close()
+	err = handler.(*SocketHandler).Close()
 	assert.Nil(t, err)
 
 	// Clean up the created socket after the test.
@@ -69,15 +69,15 @@ func TestSocketHandler_DataFlow(t *testing.T) {
 	writer := NewSocketHandler(Client, Writer, writeChannel, events, socketPath, 0, 0)
 	reader := NewSocketHandler(Server, Reader, readChannel, events, socketPath, 0, 0)
 
-	err := reader.Open()
+	err := reader.(*SocketHandler).Open()
 	assert.Nil(t, err)
-	defer reader.Close()
+	defer reader.(*SocketHandler).Close()
 
 	time.Sleep(100 * time.Millisecond) // Give server time to start
 
-	err = writer.Open()
+	err = writer.(*SocketHandler).Open()
 	assert.Nil(t, err)
-	defer writer.Close()
+	defer writer.(*SocketHandler).Close()
 
 	// Write data to the socket.
 	testData := []byte("hello, world")
@@ -99,28 +99,28 @@ func TestSocketHandler_DataFlow(t *testing.T) {
 
 // TestSocketHandler_SocketServerWriterClientReader tests the interaction between a server set to write and a client set to read.
 func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
-	randomSocketPath := randSocketPath()
+	socketPath := randSocketPath()
 	serverChannel := make(chan []byte)
 	clientChannel := make(chan []byte)
 	events := make(chan error)
 
 	// Initialize server to write data.
-	serverWriter := NewSocketHandler(Server, Writer, serverChannel, events, randomSocketPath, 0, 0)
-	err := serverWriter.Open()
+	serverWriter := NewSocketHandler(Server, Writer, serverChannel, events, socketPath, 0, 0)
+	err := serverWriter.(*SocketHandler).Open()
 	assert.Nil(t, err)
-	defer serverWriter.Close()
+	defer serverWriter.(*SocketHandler).Close()
 
 	time.Sleep(100 * time.Millisecond) // Short sleep to prevent busy waiting
 
 	// Initialize client to read data.
-	clientReader := NewSocketHandler(Client, Reader, clientChannel, events, randomSocketPath, 10*time.Millisecond, 10*time.Millisecond)
-	err = clientReader.Open()
+	clientReader := NewSocketHandler(Client, Reader, clientChannel, events, socketPath, 10*time.Millisecond, 10*time.Millisecond)
+	err = clientReader.(*SocketHandler).Open()
 	assert.Nil(t, err)
-	defer clientReader.Close()
+	defer clientReader.(*SocketHandler).Close()
 
 	t.Run("TestSocketHandler_Status", func(t *testing.T) {
-		status := serverWriter.Status()
-		assert.Equal(t, serverWriter.socketPath, status.Address)
+		status := serverWriter.(*SocketHandler).Status()
+		assert.Equal(t, serverWriter.(*SocketHandler).address, status.Address)
 		assert.Equal(t, Server, status.Mode)
 		assert.Equal(t, Writer, status.Role)
 	})
@@ -145,32 +145,32 @@ func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
 
 // TestSocketHandler_SocketServerReaderClientWriter tests the interaction between a server set to read and a client set to write.
 func TestSocketHandler_SocketServerReaderClientWriter(t *testing.T) {
-	randomSocketPath := randSocketPath()
+	socketPath := randSocketPath()
 	serverChannel := make(chan []byte)
 	clientChannel := make(chan []byte)
 	events := make(chan error)
 
 	// Initialize server to read data.
-	serverReader := NewSocketHandler(Server, Reader, serverChannel, events, randomSocketPath, 0, 0)
-	err := serverReader.Open()
+	serverReader := NewSocketHandler(Server, Reader, serverChannel, events, socketPath, 0, 0)
+	err := serverReader.(*SocketHandler).Open()
 	assert.Nil(t, err)
-	defer serverReader.Close()
+	defer serverReader.(*SocketHandler).Close()
 
 	time.Sleep(100 * time.Millisecond) // Short sleep to prevent busy waiting
 
 	// Initialize client to write data.
-	clientWriter := NewSocketHandler(Client, Writer, clientChannel, events, randomSocketPath, 10*time.Millisecond, 10*time.Millisecond)
-	err = clientWriter.Open()
+	clientWriter := NewSocketHandler(Client, Writer, clientChannel, events, socketPath, 10*time.Millisecond, 10*time.Millisecond)
+	err = clientWriter.(*SocketHandler).Open()
 	assert.Nil(t, err)
-	defer clientWriter.Close()
+	defer clientWriter.(*SocketHandler).Close()
 
 	t.Run("TestSocketHandler_Status", func(t *testing.T) {
-		status := serverReader.Status()
+		status := serverReader.(*SocketHandler).Status()
 		assert.Equal(t, Server, status.Mode)
 		assert.Equal(t, Reader, status.Role)
 
-		status = clientWriter.Status()
-		assert.Equal(t, randomSocketPath, status.Address)
+		status = clientWriter.(*SocketHandler).Status()
+		assert.Equal(t, socketPath, status.Address)
 		assert.Equal(t, Client, status.Mode)
 		assert.Equal(t, Writer, status.Role)
 	})
