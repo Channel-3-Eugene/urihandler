@@ -81,7 +81,6 @@ func ParseURI(uri string) (*URI, error) {
 	}
 
 	newURI.string = parsedURL.String()
-	fmt.Printf("Parsed URI: %v\n", newURI)
 	return newURI, nil
 }
 

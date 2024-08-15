@@ -1,6 +1,7 @@
 package urihandler
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -118,10 +119,15 @@ func (h *TCPHandler) Status() Status { // Changed return type to Status interfac
 
 // connectClient establishes a client connection to the TCP server.
 func (h *TCPHandler) connectClient() error {
+
+	fmt.Printf("TCP client connecting on %s\n", h.address)
+
 	conn, err := net.Dial("tcp", h.address)
 	if err != nil {
+		fmt.Printf("Failed to connect to %s: %v\n", h.address, err)
 		return err
 	}
+	fmt.Print("TCP client connected\n")
 
 	h.mu.Lock()
 	h.connections[conn] = struct{}{}
@@ -133,6 +139,9 @@ func (h *TCPHandler) connectClient() error {
 
 // startServer starts the TCP server and listens for incoming client connections.
 func (h *TCPHandler) startServer() error {
+
+	fmt.Printf("TCP server listening on %s\n", h.address)
+
 	ln, err := net.Listen("tcp", h.address)
 	if err != nil {
 		return err
