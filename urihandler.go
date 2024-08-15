@@ -41,7 +41,7 @@ type URIHandler interface {
 	GetDataChannel() chan []byte
 	GetEventsChannel() chan error
 	Close() error
-	Status() interface{}
+	Status() Status
 }
 
 // Common status interface for all handlers

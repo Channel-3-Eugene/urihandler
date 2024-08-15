@@ -46,7 +46,7 @@ func NewSocketHandler(
 	address string,
 	readDeadline,
 	writeDeadline time.Duration,
-) interface{} {
+) URIHandler {
 	handler := &SocketHandler{
 		mode:          mode,
 		role:          role,
@@ -85,7 +85,7 @@ var socketBufferPool = sync.Pool{
 }
 
 // Status returns the current status of the SocketHandler.
-func (h *SocketHandler) Status() SocketStatus {
+func (h *SocketHandler) Status() Status { // Changed return type to Status interface
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -97,7 +97,7 @@ func (h *SocketHandler) Status() SocketStatus {
 	h.status.Connections = connections
 	h.status.Address = h.address
 
-	return h.status
+	return h.status // The SocketStatus already implements the Status interface
 }
 
 // Open starts the SocketHandler, setting up a Unix socket connection for sending or receiving data.

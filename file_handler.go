@@ -52,7 +52,7 @@ func NewFileHandler(
 	isFIFO bool,
 	readTimeout,
 	writeTimeout time.Duration,
-) interface{} {
+) URIHandler {
 	handler := &FileHandler{
 		mode:         mode,
 		role:         role,
@@ -83,8 +83,12 @@ func (h *FileHandler) SetDataChannel(dataChannel chan []byte) {
 	h.dataChannel = dataChannel
 }
 
+func (h *FileHandler) GetEventsChannel() chan error {
+	return h.events
+}
+
 // Status provides the current status of the FileHandler.
-func (h *FileHandler) Status() FileStatus {
+func (h *FileHandler) Status() Status {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	h.status.IsOpen = h.isOpen
@@ -134,7 +138,10 @@ func (h *FileHandler) Close() error {
 		err := h.file.Close()
 		h.isOpen = false
 		if h.isFIFO {
-			syscall.Unlink(h.filePath)
+			err := syscall.Unlink(h.filePath)
+			if err != nil {
+				return err
+			}
 		}
 		close(h.dataChannel)
 		return err

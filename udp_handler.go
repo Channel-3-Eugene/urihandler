@@ -50,7 +50,7 @@ func NewUDPHandler(
 	writeDeadline time.Duration,
 	sources,
 	destinations []string,
-) interface{} {
+) URIHandler { // Changed return type to URIHandler
 	handler := &UDPHandler{
 		mode:           mode,
 		role:           role,
@@ -106,7 +106,7 @@ var udpBufferPool = sync.Pool{
 }
 
 // Status returns the current status of the UDPHandler.
-func (h *UDPHandler) Status() UDPStatus {
+func (h *UDPHandler) Status() Status { // Changed return type to Status interface
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 

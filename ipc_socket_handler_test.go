@@ -120,9 +120,9 @@ func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
 
 	t.Run("TestSocketHandler_Status", func(t *testing.T) {
 		status := serverWriter.(*SocketHandler).Status()
-		assert.Equal(t, serverWriter.(*SocketHandler).address, status.Address)
-		assert.Equal(t, Server, status.Mode)
-		assert.Equal(t, Writer, status.Role)
+		assert.Equal(t, serverWriter.(*SocketHandler).address, status.GetAddress()) // Updated
+		assert.Equal(t, Server, status.GetMode())                                   // Updated
+		assert.Equal(t, Writer, status.GetRole())                                   // Updated
 	})
 
 	t.Run("TestSocketHandler_WriteData", func(t *testing.T) {
@@ -166,13 +166,13 @@ func TestSocketHandler_SocketServerReaderClientWriter(t *testing.T) {
 
 	t.Run("TestSocketHandler_Status", func(t *testing.T) {
 		status := serverReader.(*SocketHandler).Status()
-		assert.Equal(t, Server, status.Mode)
-		assert.Equal(t, Reader, status.Role)
+		assert.Equal(t, Server, status.GetMode()) // Updated
+		assert.Equal(t, Reader, status.GetRole()) // Updated
 
 		status = clientWriter.(*SocketHandler).Status()
-		assert.Equal(t, socketPath, status.Address)
-		assert.Equal(t, Client, status.Mode)
-		assert.Equal(t, Writer, status.Role)
+		assert.Equal(t, socketPath, status.GetAddress()) // Updated
+		assert.Equal(t, Client, status.GetMode())        // Updated
+		assert.Equal(t, Writer, status.GetRole())        // Updated
 	})
 
 	t.Run("TestSocketHandler_WriteData", func(t *testing.T) {

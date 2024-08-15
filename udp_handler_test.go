@@ -68,16 +68,16 @@ func TestUDPHandler_DataFlow(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Ensure both the reader and the writer have unique, valid local addresses.
-	assert.NotEmpty(t, reader.Status().Address)
-	assert.NotEmpty(t, writer.Status().Address)
-	assert.NotEqual(t, reader.Status().Address, writer.Status().Address)
+	assert.NotEmpty(t, reader.Status().GetAddress())                               // Updated
+	assert.NotEmpty(t, writer.Status().GetAddress())                               // Updated
+	assert.NotEqual(t, reader.Status().GetAddress(), writer.Status().GetAddress()) // Updated
 
 	// Configure the reader to accept data from the writer's address.
-	err = reader.AddSource(writer.Status().Address)
+	err = reader.AddSource(writer.Status().GetAddress()) // Updated
 	assert.Nil(t, err)
 
 	// Configure the writer to send data to the reader's address.
-	err = writer.AddDestination(reader.Status().Address)
+	err = writer.AddDestination(reader.Status().GetAddress()) // Updated
 	assert.Nil(t, err)
 
 	// Subtest to write data from the writer and verify it is received by the reader.

@@ -1,4 +1,3 @@
-// Package urihandler provides utilities for handling different types of socket communications.
 package urihandler
 
 import (
@@ -55,7 +54,7 @@ func NewTCPHandler(
 	address string,
 	readDeadline,
 	writeDeadline time.Duration,
-) interface{} {
+) URIHandler { // Changed return type to URIHandler
 	handler := &TCPHandler{
 		mode:          mode,
 		role:          role,
@@ -105,7 +104,7 @@ func (h *TCPHandler) Open() error {
 }
 
 // Status returns the current status of the TCPHandler.
-func (h *TCPHandler) Status() interface{} {
+func (h *TCPHandler) Status() Status { // Changed return type to Status interface
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
