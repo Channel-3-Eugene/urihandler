@@ -232,13 +232,16 @@ func (h *UDPHandler) receiveData() {
 			continue
 		}
 
-		h.mu.RLock()
-		_, ok := h.allowedSources[addr.String()]
-		h.mu.RUnlock()
+		if len(h.allowedSources) > 0 {
+			h.mu.RLock()
+			_, ok := h.allowedSources[addr.String()]
+			h.mu.RUnlock()
 
-		if !ok {
-			udpBufferPool.Put(buffer)
-			continue
+			if !ok {
+				println("Received data from unauthorized source:", addr.String())
+				udpBufferPool.Put(buffer)
+				continue
+			}
 		}
 
 		h.dataChannel <- (*buffer)[:n]

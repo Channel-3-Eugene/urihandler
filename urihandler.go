@@ -133,7 +133,6 @@ func parseSpecificURI(parsedURL *url.URL) (*URI, error) {
 
 // ValidateScheme checks if the given scheme is valid
 func ValidateScheme(s Scheme) error {
-	fmt.Printf("Validating scheme: %s\n", s)
 	for _, validScheme := range Schemes {
 		if validScheme == s {
 			return nil

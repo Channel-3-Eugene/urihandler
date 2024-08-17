@@ -2,6 +2,7 @@ package urihandler
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -86,14 +87,6 @@ func (h *TCPHandler) GetEventsChannel() chan error {
 	return h.events
 }
 
-// tcpBufferPool is a pool of byte slices used to reduce garbage collection overhead.
-var tcpBufferPool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, 4096)
-		return &b
-	},
-}
-
 // Open starts the TCPHandler instance based on its operational mode.
 func (h *TCPHandler) Open() error {
 	if h.mode == Client {
@@ -119,15 +112,11 @@ func (h *TCPHandler) Status() Status { // Changed return type to Status interfac
 
 // connectClient establishes a client connection to the TCP server.
 func (h *TCPHandler) connectClient() error {
-
-	fmt.Printf("TCP client connecting on %s\n", h.address)
-
 	conn, err := net.Dial("tcp", h.address)
 	if err != nil {
 		fmt.Printf("Failed to connect to %s: %v\n", h.address, err)
 		return err
 	}
-	fmt.Print("TCP client connected\n")
 
 	h.mu.Lock()
 	h.connections[conn] = struct{}{}
@@ -139,9 +128,6 @@ func (h *TCPHandler) connectClient() error {
 
 // startServer starts the TCP server and listens for incoming client connections.
 func (h *TCPHandler) startServer() error {
-
-	fmt.Printf("TCP server listening on %s\n", h.address)
-
 	ln, err := net.Listen("tcp", h.address)
 	if err != nil {
 		return err
@@ -193,34 +179,47 @@ func (h *TCPHandler) handleWrite(conn net.Conn) {
 		if !ok {
 			break // Channel closed
 		}
+
 		if h.writeDeadline > 0 {
 			conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
 		}
-		_, err := conn.Write(message)
+
+		n, err := conn.Write(message)
 		if err != nil {
-			h.SendError(err)
-			break
+			fmt.Printf("TCPHandler write error: %v\n", err)
+			if err != io.EOF {
+				h.SendError(err)
+			}
+			return
 		}
+
+		fmt.Printf("TCPHandler sent %d bytes, %02x\n", n, message[0])
+
+		conn.(*net.TCPConn).SetLinger(0)
 	}
 }
 
 // handleRead manages reading data from the TCP connection.
 func (h *TCPHandler) handleRead(conn net.Conn) {
 	for {
-		buffer := tcpBufferPool.Get().(*[]byte)
-		*buffer = (*buffer)[:cap(*buffer)] // Ensure the buffer is fully utilized
+		// Allocate a new buffer for each read operation
+		buffer := make([]byte, 1536)
 
 		if h.readDeadline > 0 {
 			conn.SetReadDeadline(time.Now().Add(h.readDeadline))
 		}
-		n, err := conn.Read(*buffer)
+
+		n, err := conn.Read(buffer)
 		if err != nil {
-			tcpBufferPool.Put(buffer)
+			fmt.Printf("TCPHandler read error: %v\n", err)
 			h.SendError(err)
 			break
 		}
-		h.dataChannel <- (*buffer)[:n]
-		tcpBufferPool.Put(buffer)
+
+		fmt.Printf("TCPHandler received %d bytes, %02x\n", n, buffer[0])
+
+		// Send the received data to the data channel
+		h.dataChannel <- []byte(buffer[:n])
 	}
 }
 
