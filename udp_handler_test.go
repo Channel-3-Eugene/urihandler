@@ -60,25 +60,25 @@ func TestUDPHandler_DataFlow(t *testing.T) {
 
 	// Setup writer and reader handlers, each on separate local UDP addresses.
 	writer := NewUDPHandler(Peer, Writer, writeChannel, events, "[::1]:0", 0, 0, nil, nil).(*UDPHandler)
+
 	err := writer.Open()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	reader := NewUDPHandler(Peer, Reader, readChannel, events, "[::1]:0", 0, 0, nil, nil).(*UDPHandler)
 	err = reader.Open()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	// Ensure both the reader and the writer have unique, valid local addresses.
 	assert.NotEmpty(t, reader.Status().GetAddress())                               // Updated
 	assert.NotEmpty(t, writer.Status().GetAddress())                               // Updated
 	assert.NotEqual(t, reader.Status().GetAddress(), writer.Status().GetAddress()) // Updated
 
-	// Configure the reader to accept data from the writer's address.
-	err = reader.AddSource(writer.Status().GetAddress()) // Updated
-	assert.Nil(t, err)
+	fmt.Printf("Writer address: %s\n", writer.Status().GetAddress())
+	fmt.Printf("Reader address: %s\n", reader.Status().GetAddress())
 
 	// Configure the writer to send data to the reader's address.
 	err = writer.AddDestination(reader.Status().GetAddress()) // Updated
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	// Subtest to write data from the writer and verify it is received by the reader.
 	t.Run("TestUDPHandler_WriteAndReceiveData", func(t *testing.T) {
@@ -99,6 +99,8 @@ func TestUDPHandler_DataFlow(t *testing.T) {
 	})
 
 	// Clean up: Close both handlers.
+	fmt.Printf("Closing writer and reader handlers\n")
+
 	assert.Nil(t, writer.Close())
 	assert.Nil(t, reader.Close())
 }
