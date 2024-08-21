@@ -83,8 +83,6 @@ func NewUDPHandler(
 
 	// Populate destinations.
 	for _, dst := range destinations {
-		fmt.Printf("Resolving destination: %s\n", dst)
-
 		if addr, err := net.ResolveUDPAddr("udp", dst); err == nil {
 			handler.destinations[dst] = addr
 		} else {
@@ -179,7 +177,6 @@ func (h *UDPHandler) Close() error {
 	if h.conn != nil {
 		h.conn.Close()
 	}
-	close(h.dataChannel)
 	return nil
 }
 
@@ -191,7 +188,6 @@ func (h *UDPHandler) SendError(err error) {
 
 // Open starts the UDPHandler, setting up a UDP connection for sending or receiving data.
 func (h *UDPHandler) Open() error {
-	fmt.Println("Opening UDPHandler...")
 	if h.role == Reader {
 		udpAddr, err := net.ResolveUDPAddr("udp", h.address)
 		if err != nil {
@@ -208,14 +204,12 @@ func (h *UDPHandler) Open() error {
 		h.status.Address = conn.LocalAddr().String()
 		h.mu.Unlock()
 
-		fmt.Printf("UDPHandler listening on %s\n", h.status.Address)
 		go h.receiveData()
 	} else if h.role == Writer {
 		h.mu.Lock()
 		h.status.Address = "write-only, no specific local binding"
 		h.mu.Unlock()
 
-		fmt.Printf("UDPHandler set to writer mode\n")
 		go h.sendData()
 	} else {
 		fmt.Print("Invalid role specified\n")
@@ -226,7 +220,6 @@ func (h *UDPHandler) Open() error {
 
 // sendData handles sending data to the configured destinations.
 func (h *UDPHandler) sendData() {
-	fmt.Println("Starting sendData...")
 	var wg sync.WaitGroup
 
 	for {
@@ -236,13 +229,11 @@ func (h *UDPHandler) sendData() {
 			break // Channel closed
 		}
 
-		fmt.Printf("sendData received message to send to %d destinations\n", len(h.destinations))
 		wg.Add(len(h.destinations))
 
 		for _, addr := range h.destinations {
 			go func(destAddr *net.UDPAddr) {
 				defer wg.Done()
-				fmt.Printf("sendData sending to %s\n", destAddr.String())
 
 				const maxRetries = 10
 				const retryDelay = 1 * time.Millisecond
@@ -263,7 +254,6 @@ func (h *UDPHandler) sendData() {
 					conn.Close() // Close the connection after each send
 
 					if err == nil {
-						fmt.Printf("sendData successfully sent to %s\n", destAddr.String())
 						return
 					}
 
@@ -277,7 +267,6 @@ func (h *UDPHandler) sendData() {
 					h.SendError(err)
 					return
 				}
-				fmt.Printf("sendData failed to send to %s after %d retries\n", destAddr.String(), maxRetries)
 			}(addr)
 		}
 
@@ -288,12 +277,9 @@ func (h *UDPHandler) sendData() {
 // receiveData handles receiving data from allowed sources.
 func (h *UDPHandler) receiveData() {
 	defer h.conn.Close()
-	fmt.Println("Starting receiveData...")
 
 	for {
-		buffer := make([]byte, 1536)
-
-		fmt.Println("Waiting for data...")
+		buffer := make([]byte, 1024*1024)
 
 		if h.readDeadline > 0 {
 			h.conn.SetReadDeadline(time.Now().Add(h.readDeadline))
@@ -312,8 +298,6 @@ func (h *UDPHandler) receiveData() {
 			break
 		}
 
-		fmt.Printf("Received %d bytes from %s\n", n, addr.String())
-
 		// Check if the source is allowed
 		if len(h.allowedSources) > 0 {
 			h.mu.RLock()
@@ -326,11 +310,6 @@ func (h *UDPHandler) receiveData() {
 			}
 		}
 
-		select {
-		case h.dataChannel <- buffer[:n]:
-			fmt.Printf("Data from %s sent to channel\n", addr.String())
-		case <-time.After(h.writeDeadline):
-			fmt.Println("UDPHandler: data channel blocked, dropping data")
-		}
+		h.dataChannel <- buffer[:n]
 	}
 }

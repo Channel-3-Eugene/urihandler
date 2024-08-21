@@ -73,9 +73,6 @@ func TestUDPHandler_DataFlow(t *testing.T) {
 	assert.NotEmpty(t, writer.Status().GetAddress())                               // Updated
 	assert.NotEqual(t, reader.Status().GetAddress(), writer.Status().GetAddress()) // Updated
 
-	fmt.Printf("Writer address: %s\n", writer.Status().GetAddress())
-	fmt.Printf("Reader address: %s\n", reader.Status().GetAddress())
-
 	// Configure the writer to send data to the reader's address.
 	err = writer.AddDestination(reader.Status().GetAddress()) // Updated
 	assert.NoError(t, err)
@@ -97,9 +94,6 @@ func TestUDPHandler_DataFlow(t *testing.T) {
 			assert.Equal(t, randBytes, data)
 		}
 	})
-
-	// Clean up: Close both handlers.
-	fmt.Printf("Closing writer and reader handlers\n")
 
 	assert.Nil(t, writer.Close())
 	assert.Nil(t, reader.Close())

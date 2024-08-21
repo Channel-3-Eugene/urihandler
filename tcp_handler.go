@@ -94,11 +94,11 @@ func (h *TCPHandler) Open() error {
 	} else if h.mode == Server {
 		return h.startServer()
 	}
-	return nil
+	return fmt.Errorf("invalid mode specified")
 }
 
 // Status returns the current status of the TCPHandler.
-func (h *TCPHandler) Status() Status { // Changed return type to Status interface
+func (h *TCPHandler) Status() Status {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -145,12 +145,19 @@ func (h *TCPHandler) acceptClients() {
 	for {
 		conn, err := h.listener.Accept()
 		if err != nil {
-			h.SendError(err)
-			continue
+			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+				fmt.Printf("Temporary accept error: %v\n", err)
+				time.Sleep(time.Millisecond * 5)
+				continue
+			}
+			h.SendError(fmt.Errorf("permanent accept error: %w", err))
+			return
 		}
+
 		h.mu.Lock()
 		h.connections[conn] = struct{}{}
 		h.mu.Unlock()
+
 		go h.manageStream(conn)
 	}
 }
@@ -177,33 +184,40 @@ func (h *TCPHandler) handleWrite(conn net.Conn) {
 	for {
 		message, ok := <-h.dataChannel
 		if !ok {
+			fmt.Println("Data channel closed, stopping handleWrite.")
 			break // Channel closed
 		}
 
-		if h.writeDeadline > 0 {
-			conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
-		}
+		const maxRetries = 10
+		const retryDelay = 1 * time.Millisecond
 
-		n, err := conn.Write(message)
-		if err != nil {
-			fmt.Printf("TCPHandler write error: %v\n", err)
-			if err != io.EOF {
-				h.SendError(err)
+		for i := 0; i < maxRetries; i++ {
+			if h.writeDeadline > 0 {
+				conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
 			}
+
+			_, err := conn.Write(message)
+			if err == nil {
+				break
+			}
+
+			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+				fmt.Printf("Temporary write error: %v, retrying...\n", err)
+				time.Sleep(retryDelay)
+				continue
+			}
+
+			fmt.Printf("TCPHandler write error: %v\n", err)
+			h.SendError(fmt.Errorf("write error: %w", err))
 			return
 		}
-
-		fmt.Printf("TCPHandler sent %d bytes, %02x\n", n, message[0])
-
-		conn.(*net.TCPConn).SetLinger(0)
 	}
 }
 
 // handleRead manages reading data from the TCP connection.
 func (h *TCPHandler) handleRead(conn net.Conn) {
 	for {
-		// Allocate a new buffer for each read operation
-		buffer := make([]byte, 1536)
+		buffer := make([]byte, 1024*1024)
 
 		if h.readDeadline > 0 {
 			conn.SetReadDeadline(time.Now().Add(h.readDeadline))
@@ -211,15 +225,21 @@ func (h *TCPHandler) handleRead(conn net.Conn) {
 
 		n, err := conn.Read(buffer)
 		if err != nil {
+			if err == io.EOF {
+				fmt.Println("Connection closed by peer.")
+				return
+			}
+
+			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+				fmt.Printf("Temporary read error: %v, retrying...\n", err)
+				continue
+			}
+
 			fmt.Printf("TCPHandler read error: %v\n", err)
-			h.SendError(err)
-			break
+			h.SendError(fmt.Errorf("read error: %w", err))
+			return
 		}
-
-		fmt.Printf("TCPHandler received %d bytes, %02x\n", n, buffer[0])
-
-		// Send the received data to the data channel
-		h.dataChannel <- []byte(buffer[:n])
+		h.dataChannel <- buffer[:n]
 	}
 }
 
@@ -238,6 +258,7 @@ func (h *TCPHandler) Close() error {
 	return nil
 }
 
+// SendError sends an error message to the events channel if it is defined.
 func (h *TCPHandler) SendError(err error) {
 	if h.events != nil {
 		h.events <- err
