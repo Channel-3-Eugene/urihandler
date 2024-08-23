@@ -2,6 +2,7 @@ package urihandler
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -12,7 +13,7 @@ type SocketStatus struct {
 	Mode          Mode
 	Role          Role
 	Address       string
-	Connections   []string // List of connection identifiers for simplicity
+	Connections   map[string]string // Mapping of local to remote addresses for connections
 	ReadDeadline  time.Duration
 	WriteDeadline time.Duration
 }
@@ -62,7 +63,7 @@ func NewSocketHandler(
 			Address:       address,
 			ReadDeadline:  readDeadline,
 			WriteDeadline: writeDeadline,
-			Connections:   []string{},
+			Connections:   make(map[string]string),
 		},
 	}
 	return handler
@@ -85,19 +86,21 @@ var socketBufferPool = sync.Pool{
 }
 
 // Status returns the current status of the SocketHandler.
-func (h *SocketHandler) Status() Status { // Changed return type to Status interface
+func (h *SocketHandler) Status() Status {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	connections := make([]string, 0, len(h.connections))
+	i := 0
+	connections := make(map[string]string, len(h.connections))
 	for conn := range h.connections {
-		connections = append(connections, conn.RemoteAddr().String())
+		connections[fmt.Sprintf("sock%d", i)] = conn.RemoteAddr().String()
+		i++
 	}
 
 	h.status.Connections = connections
 	h.status.Address = h.address
 
-	return h.status // The SocketStatus already implements the Status interface
+	return h.status
 }
 
 // Open starts the SocketHandler, setting up a Unix socket connection for sending or receiving data.
@@ -108,12 +111,16 @@ func (h *SocketHandler) Open() error {
 			return fmt.Errorf("error creating socket: %w", err)
 		}
 		h.listener = ln
+		h.mu.Lock()
+		h.status.Address = ln.Addr().String()
+		h.mu.Unlock()
 		go h.acceptConnections()
 	} else if h.mode == Client {
 		conn, err := net.Dial("unix", h.address)
 		if err != nil {
 			return fmt.Errorf("error connecting to socket: %w", err)
 		}
+
 		h.mu.Lock()
 		h.connections[conn] = struct{}{}
 		h.mu.Unlock()
@@ -126,12 +133,18 @@ func (h *SocketHandler) acceptConnections() {
 	for {
 		conn, err := h.listener.Accept()
 		if err != nil {
-			h.SendError(err)
-			continue
+			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+				fmt.Printf("Temporary accept error: %v\n", err)
+				time.Sleep(time.Millisecond * 5)
+				continue
+			}
+			h.SendError(fmt.Errorf("permanent accept error: %w", err))
+			return
 		}
 		h.mu.Lock()
 		h.connections[conn] = struct{}{}
 		h.mu.Unlock()
+
 		go h.manageStream(conn)
 	}
 }
@@ -154,39 +167,49 @@ func (h *SocketHandler) manageStream(conn net.Conn) {
 
 // handleWrite manages writing data to the connection.
 func (h *SocketHandler) handleWrite(conn net.Conn) {
-	if h.writeDeadline > 0 {
-		conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
-	}
 	for {
 		message, ok := <-h.dataChannel
 		if !ok {
+			fmt.Println("Data channel closed, stopping handleWrite.")
 			break // Channel closed
 		}
+
+		if h.writeDeadline > 0 {
+			conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
+		}
+
 		_, err := conn.Write(message)
 		if err != nil {
-			h.SendError(err)
+			h.SendError(fmt.Errorf("write error: %w", err))
 			break // Exit if there is an error writing
 		}
 	}
 }
 
-// handleRead manages reading data from the connection.
+// handleRead manages reading data from the connection without using a buffer pool.
 func (h *SocketHandler) handleRead(conn net.Conn) {
+	defer conn.Close()
+
 	for {
-		buffer := socketBufferPool.Get().(*[]byte)
-		*buffer = (*buffer)[:cap(*buffer)] // Ensure the buffer is fully utilized
+		buffer := make([]byte, 1024*1024) // Adjust the buffer size as needed
 
 		if h.readDeadline > 0 {
 			conn.SetReadDeadline(time.Now().Add(h.readDeadline))
 		}
-		n, err := conn.Read(*buffer)
+
+		n, err := conn.Read(buffer)
 		if err != nil {
-			socketBufferPool.Put(buffer)
-			h.SendError(err)
-			break // Exit on error or when EOF is reached
+			if err == io.EOF {
+				fmt.Println("Connection closed by peer.")
+				return
+			}
+
+			fmt.Printf("SocketHandler read error: %v\n", err)
+			h.SendError(fmt.Errorf("read error: %w", err))
+			return
 		}
-		h.dataChannel <- (*buffer)[:n]
-		socketBufferPool.Put(buffer)
+
+		h.dataChannel <- buffer[:n]
 	}
 }
 
@@ -205,6 +228,7 @@ func (h *SocketHandler) Close() error {
 	return nil
 }
 
+// SendError sends an error message to the events channel if it is defined.
 func (h *SocketHandler) SendError(err error) {
 	if h.events != nil {
 		h.events <- err

@@ -239,6 +239,8 @@ func (h *TCPHandler) handleRead(conn net.Conn) {
 			h.SendError(fmt.Errorf("read error: %w", err))
 			return
 		}
+
+		fmt.Printf("Received data: %#v\n", buffer[0])
 		h.dataChannel <- buffer[:n]
 	}
 }
