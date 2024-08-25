@@ -3,6 +3,7 @@ package urihandler
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -104,17 +105,20 @@ func (h *FileHandler) Open() error {
 	if _, err = os.Stat(h.filePath); os.IsNotExist(err) {
 		if h.isFIFO {
 			if err = syscall.Mkfifo(h.filePath, 0666); err != nil {
+				fmt.Printf("FileHandler Open error: %s\n", err.Error())
 				return err
 			}
 		} else {
 			h.file, err = os.Create(h.filePath)
 			if err != nil {
+				fmt.Printf("FileHandler Open error: %s\n", err.Error())
 				return err
 			}
 		}
 	} else {
 		h.file, err = os.OpenFile(h.filePath, os.O_APPEND|os.O_CREATE, 0666)
 		if err != nil {
+			fmt.Printf("FileHandler Open error: %s\n", err.Error())
 			return err
 		}
 	}
@@ -144,71 +148,56 @@ func (h *FileHandler) Close() error {
 			}
 		}
 		close(h.dataChannel)
+		fmt.Printf("FileHandler Close error: %s\n", err.Error())
 		return err
 	}
 	return nil
 }
 
-// fileBufferPool is a pool of byte slices used to reduce garbage collection overhead.
-var fileBufferPool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, 4096)
-		return &b
-	},
-}
-
 // readData handles the data reading operations from the file based on configured timeouts.
 func (h *FileHandler) readData() {
-	defer h.file.Close()
-
 	for {
-		buffer := fileBufferPool.Get().(*[]byte)
-		*buffer = (*buffer)[:cap(*buffer)] // Ensure the buffer is fully utilized
+		buffer := make([]byte, 4096) // Allocate a new buffer for each read operation
 
 		if h.readTimeout > 0 {
 			select {
 			case <-time.After(h.readTimeout):
-				fileBufferPool.Put(buffer)
 				h.SendError(errors.New("file read operation timed out"))
 				return
 			default:
-				n, err := h.file.Read(*buffer)
+				n, err := h.file.Read(buffer)
 				if err != nil {
 					if err == io.EOF || err == syscall.EINTR {
-						fileBufferPool.Put(buffer)
 						continue
 					}
-					fileBufferPool.Put(buffer)
+					fmt.Printf("FileHandler readData (with timeout) error: %s\n", err.Error())
 					h.SendError(err)
 					return
 				}
 				if n > 0 {
-					h.dataChannel <- (*buffer)[:n]
+					h.dataChannel <- buffer[:n]
 				}
-				fileBufferPool.Put(buffer)
 			}
 		} else {
-			n, err := h.file.Read(*buffer)
+			n, err := h.file.Read(buffer)
 			if err != nil {
 				if err == io.EOF || err == syscall.EINTR {
-					fileBufferPool.Put(buffer)
 					continue
 				}
-				fileBufferPool.Put(buffer)
+				fmt.Printf("FileHandler readData error: %s\n", err.Error())
 				h.SendError(err)
 				return
 			}
 			if n > 0 {
-				h.dataChannel <- (*buffer)[:n]
+				h.dataChannel <- buffer[:n]
 			}
-			fileBufferPool.Put(buffer)
 		}
 	}
 }
 
 // writeData handles the data writing operations to the file based on configured timeouts.
 func (h *FileHandler) writeData() {
-	defer h.file.Close()
+	// defer h.file.Close()
 
 	for data := range h.dataChannel {
 		if h.writeTimeout > 0 {
@@ -216,6 +205,7 @@ func (h *FileHandler) writeData() {
 			go func() {
 				_, err := h.file.Write(data)
 				if err != nil {
+					fmt.Printf("FileHandler writeData (with timeout) error: %s (%#v) \n", err.Error(), data[0])
 					h.SendError(err)
 				}
 				close(writeDone)
@@ -230,6 +220,7 @@ func (h *FileHandler) writeData() {
 		} else {
 			_, err := h.file.Write(data)
 			if err != nil {
+				fmt.Printf("FileHandler writeData error: %s (%#v)\n", err.Error(), data[0])
 				h.SendError(err)
 			}
 		}
