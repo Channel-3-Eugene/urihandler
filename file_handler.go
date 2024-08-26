@@ -197,8 +197,6 @@ func (h *FileHandler) readData() {
 
 // writeData handles the data writing operations to the file based on configured timeouts.
 func (h *FileHandler) writeData() {
-	// defer h.file.Close()
-
 	for data := range h.dataChannel {
 		if h.writeTimeout > 0 {
 			writeDone := make(chan struct{})
