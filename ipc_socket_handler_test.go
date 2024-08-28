@@ -1,6 +1,7 @@
 package urihandler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"os"
@@ -40,11 +41,11 @@ func TestSocketHandler_OpenAndClose(t *testing.T) {
 
 	// Open the handler and verify that the socket exists after opening.
 	handler := NewSocketHandler(Server, Writer, dataChannel, events, socketPath, 0, 0)
-	err := handler.(*SocketHandler).Open()
+	err := handler.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 
 	// Give some time for the socket to be created
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	// Check if the socket file exists
 	_, err = os.Stat(socketPath)
@@ -53,6 +54,38 @@ func TestSocketHandler_OpenAndClose(t *testing.T) {
 	// Close the handler and check if the socket is properly closed.
 	err = handler.(*SocketHandler).Close()
 	assert.Nil(t, err)
+}
+
+// TestSocketHandler_OpenAndCancel tests the Open method of the SocketHandler and verifies that it correctly handles context cancellation.
+func TestSocketHandler_OpenAndCancel(t *testing.T) {
+	socketPath := randSocketPath()
+	dataChannel := make(chan []byte)
+	events := make(chan error)
+
+	// Ensure any existing socket with the same name is removed before starting the test.
+	os.Remove(socketPath)
+
+	// Create a context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Open the handler and verify that the socket exists after opening.
+	handler := NewSocketHandler(Server, Writer, dataChannel, events, socketPath, 0, 0)
+	err := handler.(*SocketHandler).Open(ctx)
+	assert.Nil(t, err)
+
+	// Check if the socket file exists
+	_, err = os.Stat(socketPath)
+	assert.Nil(t, err)
+
+	// Cancel the context and check if the handler stops correctly
+	cancel()
+
+	// Give some time for the handler to stop
+	time.Sleep(10 * time.Millisecond)
+
+	// Check if the socket is properly closed after cancellation.
+	_, err = os.Stat(socketPath)
+	assert.True(t, os.IsNotExist(err), "Socket file should not exist after context cancellation")
 
 	// Clean up the created socket after the test.
 	os.Remove(socketPath)
@@ -69,13 +102,13 @@ func TestSocketHandler_DataFlow(t *testing.T) {
 	writer := NewSocketHandler(Client, Writer, writeChannel, events, socketPath, 0, 0)
 	reader := NewSocketHandler(Server, Reader, readChannel, events, socketPath, 0, 0)
 
-	err := reader.(*SocketHandler).Open()
+	err := reader.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer reader.(*SocketHandler).Close()
 
 	time.Sleep(100 * time.Millisecond) // Give server time to start
 
-	err = writer.(*SocketHandler).Open()
+	err = writer.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer writer.(*SocketHandler).Close()
 
@@ -106,7 +139,7 @@ func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
 
 	// Initialize server to write data.
 	serverWriter := NewSocketHandler(Server, Writer, serverChannel, events, socketPath, 0, 0)
-	err := serverWriter.(*SocketHandler).Open()
+	err := serverWriter.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer serverWriter.(*SocketHandler).Close()
 
@@ -114,7 +147,7 @@ func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
 
 	// Initialize client to read data.
 	clientReader := NewSocketHandler(Client, Reader, clientChannel, events, socketPath, 10*time.Millisecond, 10*time.Millisecond)
-	err = clientReader.(*SocketHandler).Open()
+	err = clientReader.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer clientReader.(*SocketHandler).Close()
 
@@ -152,7 +185,7 @@ func TestSocketHandler_SocketServerReaderClientWriter(t *testing.T) {
 
 	// Initialize server to read data.
 	serverReader := NewSocketHandler(Server, Reader, serverChannel, events, socketPath, 0, 0)
-	err := serverReader.(*SocketHandler).Open()
+	err := serverReader.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer serverReader.(*SocketHandler).Close()
 
@@ -160,7 +193,7 @@ func TestSocketHandler_SocketServerReaderClientWriter(t *testing.T) {
 
 	// Initialize client to write data.
 	clientWriter := NewSocketHandler(Client, Writer, clientChannel, events, socketPath, 10*time.Millisecond, 10*time.Millisecond)
-	err = clientWriter.(*SocketHandler).Open()
+	err = clientWriter.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer clientWriter.(*SocketHandler).Close()
 

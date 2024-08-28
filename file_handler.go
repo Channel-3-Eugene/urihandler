@@ -2,6 +2,7 @@
 package urihandler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,19 +14,20 @@ import (
 
 // FileStatus represents the current status of a FileHandler, including operational configuration and state.
 type FileStatus struct {
-	FilePath     string
-	IsFIFO       bool
-	Mode         Mode
-	Role         Role
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	IsOpen       bool
+	filePath     string
+	isFIFO       bool
+	mode         Mode
+	role         Role
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	isOpen       bool
 }
 
 // Getter methods for FileStatus
-func (f FileStatus) GetMode() Mode      { return f.Mode }
-func (f FileStatus) GetRole() Role      { return f.Role }
-func (f FileStatus) GetAddress() string { return f.FilePath }
+func (f FileStatus) GetMode() Mode      { return f.mode }
+func (f FileStatus) GetRole() Role      { return f.role }
+func (f FileStatus) GetAddress() string { return f.filePath }
+func (f FileStatus) IsOpen() bool       { return f.isOpen }
 
 // FileHandler manages the operations for a file, supporting both regular file operations and FIFO-based interactions.
 type FileHandler struct {
@@ -64,13 +66,13 @@ func NewFileHandler(
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
 		status: FileStatus{
-			FilePath:     filePath,
-			IsFIFO:       isFIFO,
-			Mode:         mode,
-			Role:         role,
-			ReadTimeout:  readTimeout,
-			WriteTimeout: writeTimeout,
-			IsOpen:       false,
+			filePath:     filePath,
+			isFIFO:       isFIFO,
+			mode:         mode,
+			role:         role,
+			readTimeout:  readTimeout,
+			writeTimeout: writeTimeout,
+			isOpen:       false,
 		},
 	}
 	return handler
@@ -92,12 +94,14 @@ func (h *FileHandler) GetEventsChannel() chan error {
 func (h *FileHandler) Status() Status {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	h.status.IsOpen = h.isOpen
+	h.status.mode = h.mode
+	h.status.role = h.role
+	h.status.filePath = h.filePath
 	return h.status
 }
 
 // Open initializes the file handler by opening or creating the file and starting the appropriate data processing goroutines.
-func (h *FileHandler) Open() error {
+func (h *FileHandler) Open(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -126,9 +130,9 @@ func (h *FileHandler) Open() error {
 	h.isOpen = true
 
 	if h.role == Reader {
-		go h.readData()
+		go h.readData(ctx)
 	} else {
-		go h.writeData()
+		go h.writeData(ctx)
 	}
 	return nil
 }
@@ -140,7 +144,11 @@ func (h *FileHandler) Close() error {
 
 	if h.file != nil {
 		err := h.file.Close()
+		if err != nil {
+			return err
+		}
 		h.isOpen = false
+
 		if h.isFIFO {
 			err := syscall.Unlink(h.filePath)
 			if err != nil {
@@ -148,37 +156,32 @@ func (h *FileHandler) Close() error {
 			}
 		}
 		close(h.dataChannel)
-		fmt.Printf("FileHandler Close error: %s\n", err.Error())
-		return err
 	}
+
+	h.isOpen = false
+
 	return nil
 }
 
 // readData handles the data reading operations from the file based on configured timeouts.
-func (h *FileHandler) readData() {
+func (h *FileHandler) readData(ctx context.Context) {
 	for {
 		buffer := make([]byte, 4096) // Allocate a new buffer for each read operation
 
-		if h.readTimeout > 0 {
-			select {
-			case <-time.After(h.readTimeout):
-				h.SendError(errors.New("file read operation timed out"))
-				return
-			default:
-				n, err := h.file.Read(buffer)
-				if err != nil {
-					if err == io.EOF || err == syscall.EINTR {
-						continue
-					}
-					fmt.Printf("FileHandler readData (with timeout) error: %s\n", err.Error())
-					h.SendError(err)
+		select {
+		case <-ctx.Done():
+			h.Close()
+			return
+		default:
+			if h.readTimeout > 0 {
+				select {
+				case <-time.After(h.readTimeout):
+					h.SendError(errors.New("file read operation timed out"))
 					return
-				}
-				if n > 0 {
-					h.dataChannel <- buffer[:n]
+				default:
 				}
 			}
-		} else {
+
 			n, err := h.file.Read(buffer)
 			if err != nil {
 				if err == io.EOF || err == syscall.EINTR {
@@ -196,26 +199,22 @@ func (h *FileHandler) readData() {
 }
 
 // writeData handles the data writing operations to the file based on configured timeouts.
-func (h *FileHandler) writeData() {
+func (h *FileHandler) writeData(ctx context.Context) {
 	for data := range h.dataChannel {
-		if h.writeTimeout > 0 {
-			writeDone := make(chan struct{})
-			go func() {
-				_, err := h.file.Write(data)
-				if err != nil {
-					fmt.Printf("FileHandler writeData (with timeout) error: %s (%#v) \n", err.Error(), data[0])
-					h.SendError(err)
+		select {
+		case <-ctx.Done():
+			h.Close()
+			return
+		default:
+			if h.writeTimeout > 0 {
+				select {
+				case <-time.After(h.writeTimeout):
+					h.SendError(errors.New("file write operation timed out"))
+					return
+				default:
 				}
-				close(writeDone)
-			}()
-
-			select {
-			case <-writeDone:
-			case <-time.After(h.writeTimeout):
-				h.SendError(errors.New("file write operation timed out"))
-				return
 			}
-		} else {
+
 			_, err := h.file.Write(data)
 			if err != nil {
 				fmt.Printf("FileHandler writeData error: %s (%#v)\n", err.Error(), data[0])

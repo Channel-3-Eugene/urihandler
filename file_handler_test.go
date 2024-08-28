@@ -1,8 +1,10 @@
 package urihandler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -39,7 +41,7 @@ func TestFileHandler_OpenAndClose(t *testing.T) {
 
 	// Open the handler and verify that the file exists after opening.
 	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, 0, 0).(*FileHandler)
-	err := handler.Open()
+	err := handler.Open(context.Background())
 	assert.Nil(t, err)
 	assert.FileExists(t, filePath)
 
@@ -56,6 +58,38 @@ func TestFileHandler_OpenAndClose(t *testing.T) {
 	os.Remove(filePath)
 }
 
+func TestFileHandler_OpenAndCancel(t *testing.T) {
+	filePath := randFileName()
+
+	// Ensure any existing file with the same name is removed before starting the test.
+	os.Remove(filePath)
+	channel := make(chan []byte)
+	events := make(chan error)
+
+	// Open the handler and verify that the file exists after opening.
+	handler := NewFileHandler(Peer, Writer, channel, events, filePath, false, 0, 0).(*FileHandler)
+	ctx, cancel := context.WithCancel(context.Background())
+	err := handler.Open(ctx)
+	assert.Nil(t, err)
+	assert.FileExists(t, filePath)
+
+	// Evaluate the file handler status
+	status := handler.Status()
+	assert.Equal(t, Peer, status.GetMode())
+	assert.Equal(t, Writer, status.GetRole())
+	assert.Equal(t, filePath, status.GetAddress())
+
+	// Cancel the context to simulate a shutdown and check if the file is removed.
+	cancel()
+	time.Sleep(100 * time.Millisecond) // Wait for the handler to close.
+
+	// Reevaluate the file handler status
+	status = handler.Status()
+	assert.Equal(t, Peer, status.GetMode())
+	assert.Equal(t, Writer, status.GetRole())
+	assert.Equal(t, filePath, status.GetAddress())
+}
+
 // TestFileHandler_FIFO checks the functionality of the FileHandler with FIFO specific operations.
 func TestFileHandler_FIFO(t *testing.T) {
 	filePath := randFileName()
@@ -65,7 +99,7 @@ func TestFileHandler_FIFO(t *testing.T) {
 	handler := NewFileHandler(Peer, Reader, channel, events, filePath, true, 1, 1).(*FileHandler)
 
 	// Open the handler as a FIFO and ensure the FIFO file exists.
-	err := handler.Open()
+	err := handler.Open(context.Background())
 	assert.Nil(t, err)
 	_, err = os.Stat(filePath)
 	assert.Nil(t, err)
@@ -88,28 +122,29 @@ func TestFileHandler_FIFO(t *testing.T) {
 // TestFileHandler_DataFlow tests the complete cycle of writing to and reading from the file.
 func TestFileHandler_DataFlow(t *testing.T) {
 	filePath := randFileName()
-	readChannel := make(chan []byte)
-	writeChannel := make(chan []byte)
+	readChannel := make(chan []byte, 1)
+	writeChannel := make(chan []byte, 1)
 	events := make(chan error)
 
 	// Initialize writer and reader handlers.
 	writer := NewFileHandler(Peer, Writer, writeChannel, events, filePath, false, 0, 0).(*FileHandler)
-	writer.Open()
+	err := writer.Open(context.Background())
+	assert.Nil(t, err)
 	defer writer.Close()
 
 	reader := NewFileHandler(Peer, Reader, readChannel, events, filePath, false, 0, 0).(*FileHandler)
-	reader.Open()
+	err = reader.Open(context.Background())
+	assert.Nil(t, err)
 	defer reader.Close()
 
 	// Write data to the file.
 	testData := []byte("hello, world")
-	go func() {
-		writeChannel <- testData
-	}()
+	fmt.Printf("Sending testData: %s\n", testData)
+	writeChannel <- testData
 
 	// Attempt to read the data and check if matches what was written.
 	select {
-	case <-time.After(5 * time.Millisecond):
+	case <-time.After(10 * time.Millisecond):
 		assert.Fail(t, "Timeout waiting for data")
 	case data := <-readChannel:
 		assert.Equal(t, testData, data)

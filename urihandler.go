@@ -1,6 +1,7 @@
 package urihandler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -37,7 +38,7 @@ const (
 var Schemes = []Scheme{Default, File, Pipe, Unix, TCP, UDP}
 
 type URIHandler interface {
-	Open() error
+	Open(context.Context) error
 	GetDataChannel() chan []byte
 	GetEventsChannel() chan error
 	Close() error
@@ -49,6 +50,7 @@ type Status interface {
 	GetMode() Mode
 	GetRole() Role
 	GetAddress() string
+	IsOpen() bool
 }
 
 type URI struct {

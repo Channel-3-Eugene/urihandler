@@ -1,6 +1,7 @@
 package urihandler
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"testing"
@@ -46,6 +47,77 @@ func TestUDPHandler_New(t *testing.T) {
 	assert.Len(t, handler.destinations, 0)
 }
 
+// TestUDPHandler_OpenAndClose tests the Open and Close methods of the UDPHandler to ensure the handler can be properly opened and closed.
+func TestUDPHandler_OpenAndClose(t *testing.T) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		fmt.Printf("TestUDPHandler_OpenAndClose took %v\n", duration)
+	}()
+
+	readChannel := make(chan []byte)
+	events := make(chan error)
+
+	// Create a new UDPHandler with a listening address, read and write timeouts, and roles specified.
+	handler := NewUDPHandler(
+		Peer,
+		Reader,
+		readChannel,
+		events,
+		":0",
+		10*time.Second,
+		5*time.Second,
+		nil,
+		nil,
+	).(*UDPHandler)
+
+	// Open the handler and verify that it is successfully opened.
+	err := handler.Open(context.Background())
+	assert.Nil(t, err)
+	assert.True(t, handler.Status().IsOpen())
+
+	// Close the handler and verify that it is successfully closed.
+	err = handler.Close()
+	assert.Nil(t, err)
+	assert.False(t, handler.Status().IsOpen())
+}
+
+// TestUDPHandler_OpenAndCancel tests the Open method of the UDPHandler with a context that is canceled before the handler is fully opened.
+func TestUDPHandler_OpenAndCancel(t *testing.T) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		fmt.Printf("TestUDPHandler_OpenAndCancel took %v\n", duration)
+	}()
+
+	readChannel := make(chan []byte)
+	events := make(chan error)
+
+	// Create a new UDPHandler with a listening address, read and write timeouts, and roles specified.
+	handler := NewUDPHandler(
+		Peer,
+		Reader,
+		readChannel,
+		events,
+		":0",
+		10*time.Second,
+		5*time.Second,
+		nil,
+		nil,
+	).(*UDPHandler)
+
+	// Open the handler with a context that is canceled immediately.
+	ctx, cancel := context.WithCancel(context.Background())
+	err := handler.Open(ctx)
+	assert.Nil(t, err)
+	assert.True(t, handler.Status().IsOpen())
+
+	// Cancel the context and verify that the handler is closed.
+	cancel()
+	time.Sleep(10 * time.Millisecond) // Wait for the handler to close.
+	assert.False(t, handler.Status().IsOpen())
+}
+
 // TestUDPHandler_DataFlow tests the UDP data flow from a writer to a reader to ensure data sent by the writer is correctly received by the reader.
 func TestUDPHandler_DataFlow(t *testing.T) {
 	start := time.Now()
@@ -61,11 +133,11 @@ func TestUDPHandler_DataFlow(t *testing.T) {
 	// Setup writer and reader handlers, each on separate local UDP addresses.
 	writer := NewUDPHandler(Peer, Writer, writeChannel, events, "[::1]:0", 0, 0, nil, nil).(*UDPHandler)
 
-	err := writer.Open()
+	err := writer.Open(context.Background())
 	assert.NoError(t, err)
 
 	reader := NewUDPHandler(Peer, Reader, readChannel, events, "[::1]:0", 0, 0, nil, nil).(*UDPHandler)
-	err = reader.Open()
+	err = reader.Open(context.Background())
 	assert.NoError(t, err)
 
 	// Ensure both the reader and the writer have unique, valid local addresses.

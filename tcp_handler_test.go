@@ -1,6 +1,7 @@
 package urihandler
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"testing"
@@ -42,21 +43,29 @@ func TestTCPHandler_ServerWriterClientReader(t *testing.T) {
 	events := make(chan error)
 
 	serverWriter := NewTCPHandler(Server, Writer, writerChannel, events, ":0", 0, 0).(*TCPHandler)
-	err := serverWriter.Open()
+
+	fmt.Printf("Address: %#v\n", serverWriter.address)
+
+	err := serverWriter.Open(context.Background())
 	assert.Nil(t, err)
+
+	time.Sleep(10 * time.Millisecond) // Short sleep to let server start
 
 	status := serverWriter.Status().(TCPStatus)
-	serverWriterAddr := status.Address
+	fmt.Printf("ServerWriter status: %#v\n", status)
+	serverWriterAddr := status.address
 
 	clientReader := NewTCPHandler(Client, Reader, readerChannel, events, serverWriterAddr, 0, 0).(*TCPHandler)
-	err = clientReader.Open()
+	err = clientReader.Open(context.Background())
 	assert.Nil(t, err)
+
+	time.Sleep(10 * time.Millisecond) // Short sleep to let client start
 
 	t.Run("TestTCPHandler_Status", func(t *testing.T) {
 		status := serverWriter.Status().(TCPStatus)
-		assert.Equal(t, serverWriterAddr, status.Address)
-		assert.Equal(t, Server, status.Mode)
-		assert.Equal(t, Writer, status.Role)
+		assert.Equal(t, serverWriterAddr, status.address)
+		assert.Equal(t, Server, status.mode)
+		assert.Equal(t, Writer, status.role)
 	})
 
 	t.Run("TestTCPHandler_WriteData", func(t *testing.T) {
@@ -87,30 +96,32 @@ func TestTCPHandler_ServerReaderClientWriter(t *testing.T) {
 		fmt.Printf("TestTCPHandler_ServerReaderClientWriter took %v\n", duration)
 	}()
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	writerChannel := make(chan []byte)
 	readerChannel := make(chan []byte)
 	events := make(chan error)
 
 	serverReader := NewTCPHandler(Server, Reader, readerChannel, events, ":0", 0, 0).(*TCPHandler)
-	err := serverReader.Open()
+	err := serverReader.Open(ctx)
 	assert.Nil(t, err)
 
 	status := serverReader.Status().(TCPStatus)
-	serverReaderAddr := status.Address
+	serverReaderAddr := status.address
 
 	clientWriter := NewTCPHandler(Client, Writer, writerChannel, events, serverReaderAddr, 0, 0).(*TCPHandler)
-	err = clientWriter.Open()
+	err = clientWriter.Open(ctx)
 	assert.Nil(t, err)
 
 	t.Run("TestTCPHandler_Status", func(t *testing.T) {
 		status := serverReader.Status().(TCPStatus)
-		assert.Equal(t, Server, status.Mode)
-		assert.Equal(t, Reader, status.Role)
+		assert.Equal(t, Server, status.mode)
+		assert.Equal(t, Reader, status.role)
 
 		status = clientWriter.Status().(TCPStatus)
-		assert.Equal(t, serverReaderAddr, status.Address)
-		assert.Equal(t, Client, status.Mode)
-		assert.Equal(t, Writer, status.Role)
+		assert.Equal(t, serverReaderAddr, status.address)
+		assert.Equal(t, Client, status.mode)
+		assert.Equal(t, Writer, status.role)
 	})
 
 	t.Run("TestTCPHandler_WriteData", func(t *testing.T) {
@@ -130,5 +141,14 @@ func TestTCPHandler_ServerReaderClientWriter(t *testing.T) {
 		case data := <-readerChannel:
 			assert.Equal(t, randBytes, data)
 		}
+	})
+
+	t.Run("TCPHandler_CancelContext", func(t *testing.T) {
+		cancel()
+
+		time.Sleep(10 * time.Millisecond) // Short sleep to let cancel propagate
+		status := serverReader.Status().(TCPStatus)
+		assert.Len(t, status.connections, 0)
+		assert.False(t, status.isOpen)
 	})
 }
