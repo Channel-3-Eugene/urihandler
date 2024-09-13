@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -40,6 +41,13 @@ type SocketHandler struct {
 	connections   map[net.Conn]struct{}
 	mu            sync.RWMutex
 	status        SocketStatus
+}
+
+// Buffer pool for reusing byte buffers to reduce memory allocations.
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 1024*1024) // 1MB buffer size
+	},
 }
 
 // NewSocketHandler initializes a new SocketHandler with the specified settings.
@@ -81,14 +89,6 @@ func (h *SocketHandler) GetEventsChannel() chan error {
 	return h.events
 }
 
-// socketBufferPool is a pool of byte slices used to reduce garbage collection overhead.
-var socketBufferPool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, 4096)
-		return &b
-	},
-}
-
 // Status returns the current status of the SocketHandler.
 func (h *SocketHandler) Status() Status {
 	h.mu.RLock()
@@ -108,15 +108,38 @@ func (h *SocketHandler) Status() Status {
 	return h.status
 }
 
+// validateSocketPath ensures the Unix socket path is within system limits.
+func validateSocketPath(address string) error {
+	const maxUnixSocketPathLength = 108
+	if len(address) > maxUnixSocketPathLength {
+		return fmt.Errorf("socket path length exceeds the maximum of %d characters", maxUnixSocketPathLength)
+	}
+	return nil
+}
+
 // Open starts the SocketHandler, setting up a Unix socket connection for sending or receiving data.
 func (h *SocketHandler) Open(ctx context.Context) error {
+	// Validate socket path length
+	if err := validateSocketPath(h.address); err != nil {
+		h.SendError(fmt.Errorf("invalid socket path: %w", err))
+		return err
+	}
+
 	if h.mode == Server {
-		ln, err := net.Listen("unix", h.address)
-		if err != nil {
-			return fmt.Errorf("error creating socket: %w", err)
+		// Clean up any existing socket file
+		if _, err := os.Stat(h.address); err == nil {
+			if err := os.Remove(h.address); err != nil {
+				h.SendError(fmt.Errorf("failed to remove existing socket file: %w", err))
+				return err
+			}
 		}
 
-		fmt.Printf("Listening on %s\n", ln.Addr().String())
+		ln, err := net.Listen("unix", h.address)
+		if err != nil {
+			fmt.Println("Error creating socket:", err) // Add this for debugging
+			h.SendError(fmt.Errorf("error creating socket: %w", err))
+			return err
+		}
 
 		h.listener = ln
 		h.mu.Lock()
@@ -126,7 +149,9 @@ func (h *SocketHandler) Open(ctx context.Context) error {
 	} else if h.mode == Client {
 		conn, err := net.Dial("unix", h.address)
 		if err != nil {
-			return fmt.Errorf("error connecting to socket: %w", err)
+			fmt.Println("Error connecting to socket:", err) // Add this for debugging
+			h.SendError(fmt.Errorf("error connecting to socket: %w", err))
+			return err
 		}
 
 		h.mu.Lock()
@@ -148,7 +173,6 @@ func (h *SocketHandler) acceptConnections(ctx context.Context) {
 		default:
 			conn, err := h.listener.Accept()
 			if err != nil {
-				// Specific error checks to decide whether to retry
 				if isRetryableError(err) {
 					fmt.Printf("Retryable accept error: %v\n", err)
 					time.Sleep(time.Millisecond * 5)
@@ -172,7 +196,6 @@ func isRetryableError(err error) bool {
 		return false
 	}
 
-	// Example of retryable errors
 	if opErr, ok := err.(*net.OpError); ok {
 		if opErr.Err == syscall.ECONNRESET || opErr.Err == syscall.ENETUNREACH || opErr.Err == syscall.ECONNREFUSED {
 			return true
@@ -226,7 +249,7 @@ func (h *SocketHandler) handleWrite(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// handleRead manages reading data from the connection without using a buffer pool.
+// handleRead manages reading data from the connection using a buffer pool.
 func (h *SocketHandler) handleRead(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
@@ -236,7 +259,8 @@ func (h *SocketHandler) handleRead(ctx context.Context, conn net.Conn) {
 			fmt.Println("SocketHandler handleRead context canceled")
 			return
 		default:
-			buffer := make([]byte, 1024*1024) // Adjust the buffer size as needed
+			buffer := bufferPool.Get().([]byte) // Get buffer from pool
+			defer bufferPool.Put(buffer)        // Return buffer to pool when done
 
 			if h.readDeadline > 0 {
 				conn.SetReadDeadline(time.Now().Add(h.readDeadline))
@@ -275,12 +299,12 @@ func (h *SocketHandler) Close() error {
 
 	close(h.dataChannel)
 
-	// if h.mode == Server {
-	// 	err := syscall.Unlink(h.address)
-	// 	if err != nil && err != syscall.ENOENT {
-	// 		return fmt.Errorf("error unlinking socket: %w", err)
-	// 	}
-	// }
+	if h.mode == Server {
+		err := syscall.Unlink(h.address)
+		if err != nil && err != syscall.ENOENT {
+			return fmt.Errorf("error unlinking socket: %w", err)
+		}
+	}
 
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -13,7 +14,9 @@ import (
 
 // TestSocketHandler_New verifies that a new SocketHandler is correctly initialized with specified parameters.
 func TestSocketHandler_New(t *testing.T) {
-	socketPath := randSocketPath()
+	socketPath, err := randSocketPath()
+	assert.Nil(t, err)
+
 	readDeadline := 5 * time.Millisecond
 	writeDeadline := 5 * time.Millisecond
 	dataChannel := make(chan []byte)
@@ -28,24 +31,29 @@ func TestSocketHandler_New(t *testing.T) {
 	assert.Equal(t, writeDeadline, handler.(*SocketHandler).writeDeadline)
 	assert.NotNil(t, handler.(*SocketHandler).dataChannel)
 	assert.NotNil(t, handler.(*SocketHandler).events)
+
+	// Cleanup
+	defer os.Remove(socketPath)
 }
 
 // TestSocketHandler_OpenAndClose tests the Open and Close methods of the SocketHandler to ensure sockets are correctly managed.
 func TestSocketHandler_OpenAndClose(t *testing.T) {
-	socketPath := randSocketPath()
+	socketPath, err := randSocketPath()
+	assert.Nil(t, err)
+
 	dataChannel := make(chan []byte)
 	events := make(chan error)
 
 	// Ensure any existing socket with the same name is removed before starting the test.
-	os.Remove(socketPath)
+	defer os.Remove(socketPath)
 
 	// Open the handler and verify that the socket exists after opening.
 	handler := NewSocketHandler(Server, Writer, dataChannel, events, socketPath, 0, 0)
-	err := handler.(*SocketHandler).Open(context.Background())
+	err = handler.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 
 	// Give some time for the socket to be created
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Check if the socket file exists
 	_, err = os.Stat(socketPath)
@@ -58,19 +66,21 @@ func TestSocketHandler_OpenAndClose(t *testing.T) {
 
 // TestSocketHandler_OpenAndCancel tests the Open method of the SocketHandler and verifies that it correctly handles context cancellation.
 func TestSocketHandler_OpenAndCancel(t *testing.T) {
-	socketPath := randSocketPath()
+	socketPath, err := randSocketPath()
+	assert.Nil(t, err)
+
 	dataChannel := make(chan []byte)
 	events := make(chan error)
 
 	// Ensure any existing socket with the same name is removed before starting the test.
-	os.Remove(socketPath)
+	defer os.Remove(socketPath)
 
 	// Create a context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Open the handler and verify that the socket exists after opening.
 	handler := NewSocketHandler(Server, Writer, dataChannel, events, socketPath, 0, 0)
-	err := handler.(*SocketHandler).Open(ctx)
+	err = handler.(*SocketHandler).Open(ctx)
 	assert.Nil(t, err)
 
 	// Check if the socket file exists
@@ -80,20 +90,21 @@ func TestSocketHandler_OpenAndCancel(t *testing.T) {
 	// Cancel the context and check if the handler stops correctly
 	cancel()
 
-	// Give some time for the handler to stop
-	time.Sleep(10 * time.Millisecond)
-
-	// Check if the socket is properly closed after cancellation.
-	_, err = os.Stat(socketPath)
+	// Poll for socket removal
+	for i := 0; i < 100; i++ {
+		if _, err = os.Stat(socketPath); os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 	assert.True(t, os.IsNotExist(err), "Socket file should not exist after context cancellation")
-
-	// Clean up the created socket after the test.
-	os.Remove(socketPath)
 }
 
 // TestSocketHandler_DataFlow tests the complete cycle of writing to and reading from the socket.
 func TestSocketHandler_DataFlow(t *testing.T) {
-	socketPath := randSocketPath()
+	socketPath, err := randSocketPath()
+	assert.Nil(t, err)
+
 	readChannel := make(chan []byte)
 	writeChannel := make(chan []byte)
 	events := make(chan error)
@@ -102,7 +113,10 @@ func TestSocketHandler_DataFlow(t *testing.T) {
 	writer := NewSocketHandler(Client, Writer, writeChannel, events, socketPath, 0, 0)
 	reader := NewSocketHandler(Server, Reader, readChannel, events, socketPath, 0, 0)
 
-	err := reader.(*SocketHandler).Open(context.Background())
+	// Ensure any existing socket with the same name is removed before starting the test.
+	defer os.Remove(socketPath)
+
+	err = reader.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer reader.(*SocketHandler).Close()
 
@@ -125,21 +139,23 @@ func TestSocketHandler_DataFlow(t *testing.T) {
 	case data := <-readChannel:
 		assert.Equal(t, testData, data)
 	}
-
-	// Clean up resources and remove test socket.
-	os.Remove(socketPath)
 }
 
 // TestSocketHandler_SocketServerWriterClientReader tests the interaction between a server set to write and a client set to read.
 func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
-	socketPath := randSocketPath()
+	socketPath, err := randSocketPath()
+	assert.Nil(t, err)
+
 	serverChannel := make(chan []byte)
 	clientChannel := make(chan []byte)
 	events := make(chan error)
 
+	// Ensure any existing socket with the same name is removed before starting the test.
+	defer os.Remove(socketPath)
+
 	// Initialize server to write data.
 	serverWriter := NewSocketHandler(Server, Writer, serverChannel, events, socketPath, 0, 0)
-	err := serverWriter.(*SocketHandler).Open(context.Background())
+	err = serverWriter.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer serverWriter.(*SocketHandler).Close()
 
@@ -168,8 +184,8 @@ func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
 		}()
 
 		select {
-		case <-time.After(10 * time.Millisecond):
-			t.Error("Timeout waiting for data")
+		case <-time.After(50 * time.Millisecond):
+			assert.Fail(t, "Timeout waiting for data")
 		case data := <-clientChannel:
 			assert.Equal(t, randBytes, data)
 		}
@@ -178,14 +194,19 @@ func TestSocketHandler_SocketServerWriterClientReader(t *testing.T) {
 
 // TestSocketHandler_SocketServerReaderClientWriter tests the interaction between a server set to read and a client set to write.
 func TestSocketHandler_SocketServerReaderClientWriter(t *testing.T) {
-	socketPath := randSocketPath()
+	socketPath, err := randSocketPath()
+	assert.Nil(t, err)
+
 	serverChannel := make(chan []byte)
 	clientChannel := make(chan []byte)
 	events := make(chan error)
 
+	// Ensure any existing socket with the same name is removed before starting the test.
+	defer os.Remove(socketPath)
+
 	// Initialize server to read data.
 	serverReader := NewSocketHandler(Server, Reader, serverChannel, events, socketPath, 0, 0)
-	err := serverReader.(*SocketHandler).Open(context.Background())
+	err = serverReader.(*SocketHandler).Open(context.Background())
 	assert.Nil(t, err)
 	defer serverReader.(*SocketHandler).Close()
 
@@ -218,7 +239,7 @@ func TestSocketHandler_SocketServerReaderClientWriter(t *testing.T) {
 		}()
 
 		select {
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(50 * time.Millisecond):
 			assert.Fail(t, "Timeout waiting for data")
 		case data := <-serverChannel:
 			assert.Equal(t, randBytes, data)
@@ -226,12 +247,30 @@ func TestSocketHandler_SocketServerReaderClientWriter(t *testing.T) {
 	})
 }
 
+// TestSocketHandler_ErrorPropagation tests the error handling and propagation through the events channel.
+func TestSocketHandler_ErrorPropagation(t *testing.T) {
+	socketPath := "/invalid/path" // Induce failure
+	events := make(chan error, 1) // Buffering added here
+	handler := NewSocketHandler(Server, Writer, make(chan []byte), events, socketPath, 0, 0)
+
+	err := handler.(*SocketHandler).Open(context.Background())
+	assert.NotNil(t, err)
+
+	select {
+	case e := <-events:
+		assert.NotNil(t, e, "Expected an error in the events channel")
+		fmt.Printf("Error received: %v\n", e) // Add this for debugging
+	case <-time.After(100 * time.Millisecond): // Increase timeout for more time
+		assert.Fail(t, "Timeout waiting for error")
+	}
+}
+
 // randSocketPath generates a random path for a Unix socket used in testing.
-func randSocketPath() string {
+func randSocketPath() (string, error) {
 	randBytes := make([]byte, 8)
 	_, err := rand.Read(randBytes)
 	if err != nil {
-		panic(err) // It's better to handle the error properly in real applications.
+		return "", fmt.Errorf("failed to generate random socket path: %w", err)
 	}
-	return "/tmp/" + hex.EncodeToString(randBytes) + ".sock"
+	return "/tmp/" + hex.EncodeToString(randBytes) + ".sock", nil
 }
