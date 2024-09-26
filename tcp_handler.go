@@ -187,10 +187,13 @@ func (h *TCPHandler) manageStream(ctx context.Context, conn net.Conn) {
 func (h *TCPHandler) handleWrite(ctx context.Context, conn net.Conn) {
 	defer h.Close()
 
+	const maxRetries = 10
+	const retryDelay = 1 * time.Millisecond
+
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("TCPHandler handleWrite context canceled")
+			fmt.Printf("TCPHandler handleWrite context canceled: %s\n", h.address)
 			return
 		case message, ok := <-h.dataChannel:
 			if !ok {
@@ -198,14 +201,11 @@ func (h *TCPHandler) handleWrite(ctx context.Context, conn net.Conn) {
 				return // Channel closed
 			}
 
-			const maxRetries = 10
-			const retryDelay = 1 * time.Millisecond
-
 			for i := 0; i < maxRetries; i++ {
 				// Check if context is done before writing
 				select {
 				case <-ctx.Done():
-					fmt.Println("TCPHandler handleWrite context canceled during retry")
+					fmt.Printf("TCPHandler handleWrite context canceled: %s\n", h.address)
 					return
 				default:
 				}
@@ -219,7 +219,7 @@ func (h *TCPHandler) handleWrite(ctx context.Context, conn net.Conn) {
 					break
 				}
 
-				if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					fmt.Printf("Temporary write error: %v, retrying...\n", err)
 					time.Sleep(retryDelay)
 					continue
@@ -240,7 +240,7 @@ func (h *TCPHandler) handleRead(ctx context.Context, conn net.Conn) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("TCPHandler handleRead context canceled")
+			fmt.Printf("TCPHandler handleRead context canceled: %s\n", h.address)
 			return
 		default:
 			buffer := make([]byte, 1024*1024)

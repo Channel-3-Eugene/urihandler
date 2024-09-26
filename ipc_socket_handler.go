@@ -28,6 +28,8 @@ func (s SocketStatus) GetRole() Role      { return s.role }
 func (s SocketStatus) GetAddress() string { return s.address }
 func (s SocketStatus) IsOpen() bool       { return s.isOpen }
 
+const bufferSize = 16384
+
 // SocketHandler manages Unix socket connections, providing methods to open, close, and manage streams.
 type SocketHandler struct {
 	address       string
@@ -46,7 +48,7 @@ type SocketHandler struct {
 // Buffer pool for reusing byte buffers to reduce memory allocations.
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 1024*1024) // 1MB buffer size
+		return make([]byte, bufferSize)
 	},
 }
 
@@ -114,11 +116,17 @@ func validateSocketPath(address string) error {
 	if len(address) > maxUnixSocketPathLength {
 		return fmt.Errorf("socket path length exceeds the maximum of %d characters", maxUnixSocketPathLength)
 	}
+	if len(address) == 0 {
+		return fmt.Errorf("socket path is empty")
+	}
 	return nil
 }
 
 // Open starts the SocketHandler, setting up a Unix socket connection for sending or receiving data.
 func (h *SocketHandler) Open(ctx context.Context) error {
+
+	fmt.Printf("SocketHandler opening: %#v\n", h.address)
+
 	// Validate socket path length
 	if err := validateSocketPath(h.address); err != nil {
 		h.SendError(fmt.Errorf("invalid socket path: %w", err))
@@ -129,6 +137,7 @@ func (h *SocketHandler) Open(ctx context.Context) error {
 		// Clean up any existing socket file
 		if _, err := os.Stat(h.address); err == nil {
 			if err := os.Remove(h.address); err != nil {
+				fmt.Println("Couldn't remove existing file:", err) // Add this for debugging
 				h.SendError(fmt.Errorf("failed to remove existing socket file: %w", err))
 				return err
 			}
@@ -154,6 +163,8 @@ func (h *SocketHandler) Open(ctx context.Context) error {
 			return err
 		}
 
+		fmt.Println("Connected to socket:", h.address) // Add this for debugging
+
 		h.mu.Lock()
 		h.connections[conn] = struct{}{}
 		h.mu.Unlock()
@@ -168,7 +179,7 @@ func (h *SocketHandler) acceptConnections(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("SocketHandler acceptConnections context canceled")
+			fmt.Printf("SocketHandler acceptConnections context canceled: %s\n", h.address)
 			return
 		default:
 			conn, err := h.listener.Accept()
@@ -187,6 +198,8 @@ func (h *SocketHandler) acceptConnections(ctx context.Context) {
 
 			go h.manageStream(ctx, conn)
 		}
+
+		time.Sleep(1 * time.Millisecond) // Prevent busy looping if nothing happens
 	}
 }
 
@@ -225,10 +238,13 @@ func (h *SocketHandler) manageStream(ctx context.Context, conn net.Conn) {
 func (h *SocketHandler) handleWrite(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
+	const maxRetries = 10
+	const retryDelay = 1 * time.Millisecond
+
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("SocketHandler handleWrite context canceled")
+			fmt.Printf("SocketHandler handleWrite context canceled: %s\n", h.address)
 			return
 		case message, ok := <-h.dataChannel:
 			if !ok {
@@ -236,14 +252,43 @@ func (h *SocketHandler) handleWrite(ctx context.Context, conn net.Conn) {
 				return // Channel closed
 			}
 
-			if h.writeDeadline > 0 {
-				conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
-			}
+			for i := 0; i < maxRetries; i++ {
+				// Check if context is done before writing
+				select {
+				case <-ctx.Done():
+					fmt.Printf("SocketHandler handleWrite context canceled: %s\n", h.address)
+					return
+				default:
+				}
 
-			_, err := conn.Write(message)
-			if err != nil {
+				if h.writeDeadline > 0 {
+					conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
+				}
+
+				fmt.Printf("SocketHandler %s write: %#v\n", h.address, message[0])
+
+				_, err := conn.Write(message)
+				if err == nil {
+					// Successfully wrote the message, break out of retry loop
+					break
+				}
+
+				// Retry on timeout
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					fmt.Println("Write timeout, retrying...")
+					continue
+				}
+
+				// Handle EOF and other non-recoverable errors
+				if err == io.EOF {
+					fmt.Println("Connection closed by peer.")
+					return
+				}
+
+				// Log other non-recoverable errors and stop
+				fmt.Printf("SocketHandler write error: %v\n", err)
 				h.SendError(fmt.Errorf("write error: %w", err))
-				return // Exit if there is an error writing
+				return
 			}
 		}
 	}
@@ -256,7 +301,7 @@ func (h *SocketHandler) handleRead(ctx context.Context, conn net.Conn) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("SocketHandler handleRead context canceled")
+			fmt.Printf("SocketHandler handleRead context canceled: %s\n", h.address)
 			return
 		default:
 			buffer := bufferPool.Get().([]byte) // Get buffer from pool
@@ -268,18 +313,23 @@ func (h *SocketHandler) handleRead(ctx context.Context, conn net.Conn) {
 
 			n, err := conn.Read(buffer)
 			if err != nil {
-				if err == io.EOF {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					fmt.Println("Read timeout, retrying...")
+					continue // Retry instead of closing the connection
+				} else if err == io.EOF {
 					fmt.Println("Connection closed by peer.")
 					return
+				} else {
+					fmt.Printf("SocketHandler read error: %v\n", err)
+					h.SendError(fmt.Errorf("read error: %w", err))
+					return
 				}
-
-				fmt.Printf("SocketHandler read error: %v\n", err)
-				h.SendError(fmt.Errorf("read error: %w", err))
-				return
 			}
 
 			h.dataChannel <- buffer[:n]
 		}
+
+		time.Sleep(1 * time.Millisecond) // Prevent busy looping if nothing happens
 	}
 }
 
@@ -312,6 +362,7 @@ func (h *SocketHandler) Close() error {
 // SendError sends an error message to the events channel if it is defined.
 func (h *SocketHandler) SendError(err error) {
 	if h.events != nil {
+		fmt.Printf("SocketHandler error: %v\n", err)
 		h.events <- err
 	}
 }

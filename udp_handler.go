@@ -237,7 +237,7 @@ func (h *UDPHandler) sendData(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("UDPHandler sendData context canceled")
+			fmt.Printf("UDPHandler sendData context canceled: %s\n", h.address)
 			return
 		case message, ok := <-h.dataChannel:
 			if !ok {
@@ -306,7 +306,7 @@ func (h *UDPHandler) receiveData(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("UDPHandler receiveData context canceled")
+			fmt.Printf("UDPHandler receiveData context canceled: %s\n", h.address)
 			return
 		default:
 			buffer := make([]byte, 1024*1024)

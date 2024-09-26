@@ -170,6 +170,7 @@ func (h *FileHandler) readData(ctx context.Context) {
 
 		select {
 		case <-ctx.Done():
+			fmt.Printf("FileHandler readData context canceled: %s\n", h.filePath)
 			h.Close()
 			return
 		default:
@@ -203,6 +204,7 @@ func (h *FileHandler) writeData(ctx context.Context) {
 	for data := range h.dataChannel {
 		select {
 		case <-ctx.Done():
+			fmt.Printf("FileHandler writeData context canceled: %s\n", h.filePath)
 			h.Close()
 			return
 		default:
