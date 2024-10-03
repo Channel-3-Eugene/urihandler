@@ -265,8 +265,6 @@ func (h *SocketHandler) handleWrite(ctx context.Context, conn net.Conn) {
 					conn.SetWriteDeadline(time.Now().Add(h.writeDeadline))
 				}
 
-				fmt.Printf("SocketHandler %s write: %#v\n", h.address, message[0])
-
 				_, err := conn.Write(message)
 				if err == nil {
 					// Successfully wrote the message, break out of retry loop

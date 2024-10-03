@@ -48,7 +48,7 @@ func NewTCPHandler(
 	address string,
 	readDeadline,
 	writeDeadline time.Duration,
-) URIHandler { // Changed return type to URIHandler
+) URIHandler {
 	handler := &TCPHandler{
 		mode:          mode,
 		role:          role,
@@ -266,7 +266,6 @@ func (h *TCPHandler) handleRead(ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			fmt.Printf("Received data: %#v\n", buffer[0])
 			h.dataChannel <- buffer[:n]
 		}
 	}

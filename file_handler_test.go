@@ -139,7 +139,6 @@ func TestFileHandler_DataFlow(t *testing.T) {
 
 	// Write data to the file.
 	testData := []byte("hello, world")
-	fmt.Printf("Sending testData: %s\n", testData)
 	writeChannel <- testData
 
 	// Attempt to read the data and check if matches what was written.

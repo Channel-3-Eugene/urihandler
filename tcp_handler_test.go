@@ -52,7 +52,6 @@ func TestTCPHandler_ServerWriterClientReader(t *testing.T) {
 	time.Sleep(10 * time.Millisecond) // Short sleep to let server start
 
 	status := serverWriter.Status().(TCPStatus)
-	fmt.Printf("ServerWriter status: %#v\n", status)
 	serverWriterAddr := status.address
 
 	clientReader := NewTCPHandler(Client, Reader, readerChannel, events, serverWriterAddr, 0, 0).(*TCPHandler)
