@@ -108,13 +108,13 @@ func (h *FileHandler) Open(ctx context.Context) error {
 	var err error
 	if _, err = os.Stat(h.filePath); os.IsNotExist(err) {
 		if h.isFIFO {
-			fmt.Println("Creating FIFO")
+			fmt.Printf("Creating FIFO %s\n", h.filePath)
 			if err = syscall.Mkfifo(h.filePath, 0666); err != nil {
 				fmt.Printf("FileHandler Open error: %s\n", err.Error())
 				return err
 			}
 		} else {
-			fmt.Println("Creating file")
+			fmt.Printf("Creating file %s\n", h.filePath)
 			h.file, err = os.Create(h.filePath)
 			if err != nil {
 				fmt.Printf("FileHandler Open error: %s\n", err.Error())
@@ -199,9 +199,9 @@ func (h *FileHandler) readData(ctx context.Context) {
 			}
 			if n > 0 {
 				h.dataChannel <- buffer[:n]
+				fmt.Printf("FileHandler read %d bytes\n", n)
 			}
 
-			fmt.Printf("FileHandler read %d bytes\n", n)
 		}
 	}
 }

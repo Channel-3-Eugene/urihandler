@@ -93,6 +93,29 @@ func parseSpecificURI(parsedURL *url.URL) (*URI, error) {
 	path := parsedURL.Path
 	exists := true
 
+	if scheme == Pipe {
+		if path == "" {
+			// If no path is provided, use stdin for input or stdout for output
+			return &URI{
+				Scheme: scheme,
+				Path:   "", // Empty path indicates stdin or stdout
+				Exists: true,
+			}, nil
+		} else {
+			// Check if it's a named pipe (FIFO)
+			fileInfo, err := os.Stat(path)
+			if err != nil || fileInfo.Mode()&os.ModeNamedPipe == 0 {
+				return nil, fmt.Errorf("invalid named pipe or path: %s", path)
+			}
+			return &URI{
+				Scheme: scheme,
+				Path:   path,
+				Exists: true,
+			}, nil
+		}
+	}
+
+	// Continue handling other file-like schemes as before
 	if isFileLikeScheme(parsedURL.Scheme) {
 		if scheme == Default {
 			scheme = File
@@ -144,7 +167,7 @@ func ValidateScheme(s Scheme) error {
 }
 
 func isFileLikeScheme(scheme string) bool {
-	fileLikeSchemes := []Scheme{Default, File, Pipe, Unix}
+	fileLikeSchemes := []Scheme{Default, File, Unix}
 	for _, fileLikeScheme := range fileLikeSchemes {
 		if Scheme(scheme) == fileLikeScheme {
 			return true
