@@ -73,7 +73,6 @@ func ParseURI(uri string) (*URI, error) {
 	}
 
 	if err = ValidateScheme(Scheme(parsedURL.Scheme)); err != nil {
-		fmt.Printf("Error validating scheme %s: %v\n", parsedURL.Scheme, err)
 		return nil, err
 	}
 

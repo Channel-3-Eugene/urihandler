@@ -177,8 +177,6 @@ func (h *UDPHandler) RemoveDestination(addr string) error {
 
 // Close terminates the handler's operations and closes the UDP connection.
 func (h *UDPHandler) Close() error {
-	fmt.Println("Closing UDPHandler")
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.conn != nil {
@@ -221,7 +219,6 @@ func (h *UDPHandler) Open(ctx context.Context) error {
 
 		go h.sendData(ctx)
 	} else {
-		fmt.Print("Invalid role specified\n")
 		return errors.New("invalid role specified")
 	}
 
@@ -237,11 +234,9 @@ func (h *UDPHandler) sendData(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("UDPHandler sendData context canceled: %s\n", h.address)
 			return
 		case message, ok := <-h.dataChannel:
 			if !ok {
-				fmt.Println("Data channel closed, exiting sendData.")
 				return // Channel closed
 			}
 
@@ -258,7 +253,6 @@ func (h *UDPHandler) sendData(ctx context.Context) {
 						// Check if context is done before each retry
 						select {
 						case <-ctx.Done():
-							fmt.Printf("UDPHandler sendData context canceled during retry %d\n", i+1)
 							return
 						default:
 						}
@@ -306,7 +300,6 @@ func (h *UDPHandler) receiveData(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("UDPHandler receiveData context canceled: %s\n", h.address)
 			return
 		default:
 			buffer := make([]byte, 1024*1024)
@@ -318,12 +311,10 @@ func (h *UDPHandler) receiveData(ctx context.Context) {
 			n, addr, err := h.conn.ReadFromUDP(buffer)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					fmt.Printf("UDPHandler read timeout: %v\n", err)
 					h.SendError(err)
 					continue
 				}
 
-				fmt.Printf("UDPHandler read error: %v\n", err)
 				h.SendError(err)
 				return
 			}
@@ -335,7 +326,6 @@ func (h *UDPHandler) receiveData(ctx context.Context) {
 				h.mu.RUnlock()
 
 				if !ok {
-					fmt.Printf("Received data from unauthorized source: %s\n", addr.String())
 					continue
 				}
 			}

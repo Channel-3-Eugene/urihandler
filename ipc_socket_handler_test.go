@@ -259,7 +259,6 @@ func TestSocketHandler_ErrorPropagation(t *testing.T) {
 	select {
 	case e := <-events:
 		assert.NotNil(t, e, "Expected an error in the events channel")
-		fmt.Printf("Error received: %v\n", e) // Add this for debugging
 	case <-time.After(100 * time.Millisecond): // Increase timeout for more time
 		assert.Fail(t, "Timeout waiting for error")
 	}

@@ -4,7 +4,6 @@ package urihandler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -108,24 +107,18 @@ func (h *FileHandler) Open(ctx context.Context) error {
 	var err error
 	if _, err = os.Stat(h.filePath); os.IsNotExist(err) {
 		if h.isFIFO {
-			fmt.Printf("Creating FIFO %s\n", h.filePath)
 			if err = syscall.Mkfifo(h.filePath, 0666); err != nil {
-				fmt.Printf("FileHandler Open error: %s\n", err.Error())
 				return err
 			}
 		} else {
-			fmt.Printf("Creating file %s\n", h.filePath)
 			h.file, err = os.Create(h.filePath)
 			if err != nil {
-				fmt.Printf("FileHandler Open error: %s\n", err.Error())
 				return err
 			}
 		}
 	} else {
-		fmt.Printf("File exists: %s\n", h.filePath)
 		h.file, err = os.OpenFile(h.filePath, os.O_RDWR, 0666)
 		if err != nil {
-			fmt.Printf("FileHandler Open error: %s\n", err.Error())
 			return err
 		}
 	}
@@ -173,14 +166,12 @@ func (h *FileHandler) readData(ctx context.Context) {
 
 		select {
 		case <-ctx.Done():
-			fmt.Printf("FileHandler readData context canceled: %s\n", h.filePath)
 			h.Close()
 			return
 		default:
 			if h.readTimeout > 0 {
 				select {
 				case <-time.After(h.readTimeout):
-					fmt.Printf("FileHandler readData timeout: %s\n", h.filePath)
 
 					h.SendError(errors.New("file read operation timed out"))
 					return
@@ -193,13 +184,11 @@ func (h *FileHandler) readData(ctx context.Context) {
 				if err == io.EOF || err == syscall.EINTR {
 					continue
 				}
-				fmt.Printf("FileHandler readData error: %s\n", err.Error())
 				h.SendError(err)
 				return
 			}
 			if n > 0 {
 				h.dataChannel <- buffer[:n]
-				fmt.Printf("FileHandler read %d bytes\n", n)
 			}
 
 		}
@@ -211,14 +200,12 @@ func (h *FileHandler) writeData(ctx context.Context) {
 	for data := range h.dataChannel {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("FileHandler writeData context canceled: %s\n", h.filePath)
 			h.Close()
 			return
 		default:
 			if h.writeTimeout > 0 {
 				select {
 				case <-time.After(h.writeTimeout):
-					fmt.Println("file write operation timed out")
 					h.SendError(errors.New("file write operation timed out"))
 					return
 				default:
@@ -227,11 +214,8 @@ func (h *FileHandler) writeData(ctx context.Context) {
 
 			_, err := h.file.Write(data)
 			if err != nil {
-				fmt.Printf("FileHandler writeData error: %s (%#v)\n", err.Error(), data[0])
 				h.SendError(err)
 			}
-
-			fmt.Printf("FileHandler wrote %d bytes\n", len(data))
 		}
 	}
 }

@@ -67,8 +67,6 @@ func NewTCPHandler(
 
 	handler.status = handler.Status().(TCPStatus)
 
-	fmt.Printf("New TCPHandler created: %#v\n", handler.status)
-
 	return handler
 }
 
@@ -116,7 +114,6 @@ func (h *TCPHandler) Status() Status {
 func (h *TCPHandler) connectClient(ctx context.Context) error {
 	conn, err := net.Dial("tcp", h.address)
 	if err != nil {
-		fmt.Printf("Failed to connect to %s: %v\n", h.address, err)
 		return err
 	}
 
@@ -150,7 +147,6 @@ func (h *TCPHandler) acceptClients(ctx context.Context) {
 		conn, err := h.listener.Accept()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
-				fmt.Printf("Temporary accept error: %v\n", err)
 				time.Sleep(time.Millisecond * 5)
 				continue
 			}
@@ -193,11 +189,9 @@ func (h *TCPHandler) handleWrite(ctx context.Context, conn net.Conn) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("TCPHandler handleWrite context canceled: %s\n", h.address)
 			return
 		case message, ok := <-h.dataChannel:
 			if !ok {
-				fmt.Println("Data channel closed, stopping handleWrite.")
 				return // Channel closed
 			}
 
@@ -205,7 +199,6 @@ func (h *TCPHandler) handleWrite(ctx context.Context, conn net.Conn) {
 				// Check if context is done before writing
 				select {
 				case <-ctx.Done():
-					fmt.Printf("TCPHandler handleWrite context canceled: %s\n", h.address)
 					return
 				default:
 				}
@@ -220,12 +213,10 @@ func (h *TCPHandler) handleWrite(ctx context.Context, conn net.Conn) {
 				}
 
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					fmt.Printf("Temporary write error: %v, retrying...\n", err)
 					time.Sleep(retryDelay)
 					continue
 				}
 
-				fmt.Printf("TCPHandler write error: %v\n", err)
 				h.SendError(fmt.Errorf("write error: %w", err))
 				return
 			}
@@ -240,7 +231,6 @@ func (h *TCPHandler) handleRead(ctx context.Context, conn net.Conn) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("TCPHandler handleRead context canceled: %s\n", h.address)
 			return
 		default:
 			buffer := make([]byte, 1024*1024)
@@ -252,16 +242,13 @@ func (h *TCPHandler) handleRead(ctx context.Context, conn net.Conn) {
 			n, err := conn.Read(buffer)
 			if err != nil {
 				if err == io.EOF {
-					fmt.Println("Connection closed by peer.")
 					return
 				}
 
 				if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
-					fmt.Printf("Temporary read error: %v, retrying...\n", err)
 					continue
 				}
 
-				fmt.Printf("TCPHandler read error: %v\n", err)
 				h.SendError(fmt.Errorf("read error: %w", err))
 				return
 			}
