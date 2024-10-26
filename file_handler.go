@@ -4,6 +4,7 @@ package urihandler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -181,8 +182,11 @@ func (h *FileHandler) readData(ctx context.Context) {
 
 			n, err := h.file.Read(buffer)
 			if err != nil {
-				if err == io.EOF || err == syscall.EINTR {
-					continue
+				if err == io.EOF {
+					// EOF is not an error, just means we're done
+					fmt.Println("EOF")
+					h.Close()
+					return
 				}
 				h.SendError(err)
 				return
