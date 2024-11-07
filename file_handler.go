@@ -134,32 +134,6 @@ func (h *FileHandler) Open(ctx context.Context) error {
 	return nil
 }
 
-// Close terminates the file handler's operations and closes the file.
-func (h *FileHandler) Close() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.file != nil {
-		err := h.file.Close()
-		if err != nil {
-			return err
-		}
-		h.isOpen = false
-
-		if h.isFIFO {
-			err := syscall.Unlink(h.filePath)
-			if err != nil {
-				return err
-			}
-		}
-		close(h.dataChannel)
-	}
-
-	h.isOpen = false
-
-	return nil
-}
-
 // readData handles the data reading operations from the file based on configured timeouts.
 func (h *FileHandler) readData(ctx context.Context) {
 	for {
@@ -199,14 +173,17 @@ func (h *FileHandler) readData(ctx context.Context) {
 	}
 }
 
-// writeData handles the data writing operations to the file based on configured timeouts.
 func (h *FileHandler) writeData(ctx context.Context) {
-	for data := range h.dataChannel {
+	for {
 		select {
-		case <-ctx.Done():
-			h.Close()
-			return
-		default:
+		case data, ok := <-h.dataChannel:
+			if !ok {
+				// Channel is closed, perform cleanup
+				h.Close()
+				return
+			}
+
+			// Process the data
 			if h.writeTimeout > 0 {
 				select {
 				case <-time.After(h.writeTimeout):
@@ -220,6 +197,11 @@ func (h *FileHandler) writeData(ctx context.Context) {
 			if err != nil {
 				h.SendError(err)
 			}
+
+		case <-ctx.Done():
+			// Context has been cancelled, perform cleanup
+			h.Close()
+			return
 		}
 	}
 }
@@ -228,4 +210,30 @@ func (h *FileHandler) SendError(err error) {
 	if h.events != nil {
 		h.events <- err
 	}
+}
+
+// Close terminates the file handler's operations and closes the file.
+func (h *FileHandler) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.file != nil {
+		err := h.file.Close()
+		if err != nil {
+			return err
+		}
+		h.isOpen = false
+
+		if h.isFIFO {
+			err := syscall.Unlink(h.filePath)
+			if err != nil {
+				return err
+			}
+		}
+		close(h.dataChannel)
+	}
+
+	h.isOpen = false
+
+	return nil
 }
